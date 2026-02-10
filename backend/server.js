@@ -38,6 +38,7 @@ app.use('/api/tables', require('./src/routes/tables'));
 app.use('/api/ingredients', require('./src/routes/ingredients'));
 app.use('/api/modifications', require('./src/routes/modifications'));
 app.use('/api/delivery', require('./src/routes/delivery'));
+app.use('/api/payment', require('./src/routes/payment'));
 
 app.use(errorHandler);
 

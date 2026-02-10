@@ -144,6 +144,7 @@ model Order {
   updatedAt   DateTime    @updatedAt
   orderType       OrderType        @default(DINE_IN)
   deliveryInfo    DeliveryInfo?    
+  payments            Payment[]  // Add this line
 }
 
 model OrderItem {
@@ -233,5 +234,34 @@ model DeliveryInfo {
   
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
+}
+
+model Payment {
+  id                  Int       @id @default(autoincrement())
+  orderId             Int
+  order               Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  
+  // Payment details
+  amount              Decimal   @db.Decimal(10, 2)
+  currency            String    @default("INR")
+  paymentMode         String    // RAZORPAY, CASH, CARD, UPI
+  status              String    @default("PENDING") // PENDING, SUCCESS, FAILED, REFUNDED
+  
+  // Razorpay specific
+  razorpayOrderId     String?   @unique
+  razorpayPaymentId   String?   @unique
+  razorpaySignature   String?
+  
+  // Refund details
+  refundId            String?
+  refundAmount        Decimal?  @db.Decimal(10, 2)
+  refundedAt          DateTime?
+  
+  // Metadata
+  notes               String?   @db.Text
+  errorMessage        String?
+  
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
 }
 
