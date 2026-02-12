@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import Navbar from "../components/navbar";
 import axios from "axios";
+import { showSuccess, showError, showWarning } from "../utils/toast";
 
 const MenuPage = () => {
   const {
@@ -76,15 +77,15 @@ const MenuPage = () => {
 
       if (editMode) {
         await updateItem(editingId, itemData);
-        alert("✅ Item updated successfully!");
+        showSuccess("Item updated successfully!");
       } else {
         await addItem(itemData);
-        alert("✅ Item added successfully!");
+        showSuccess("Item added successfully!");
       }
 
       cancelForm();
     } catch (err) {
-      alert("❌ Failed: " + (err.response?.data?.error || err.message));
+      showError("Failed: " + (err.response?.data?.error || err.message));
     }
   };
 
@@ -107,9 +108,9 @@ const MenuPage = () => {
 
     try {
       await deleteItem(id);
-      alert("✅ Item deleted successfully!");
+      showSuccess("Item deleted successfully!");
     } catch (err) {
-      alert("❌ Delete failed: " + (err.response?.data?.error || err.message));
+      showError("Delete failed: " + (err.response?.data?.error || err.message));
     }
   };
 
@@ -117,7 +118,7 @@ const MenuPage = () => {
     try {
       await updateItem(item.id, { isActive: !item.isActive });
     } catch (err) {
-      alert("❌ Failed to update item status");
+      showError("Failed to update item status");
     }
   };
 
@@ -129,7 +130,7 @@ const MenuPage = () => {
 
   const updateStock = async () => {
     if (!stockItem?.inventory?.id) {
-      alert("❌ No inventory record found for this item");
+      showWarning("No inventory record found for this item");
       return;
     }
 
@@ -137,14 +138,14 @@ const MenuPage = () => {
       await axios.put(`/api/inventory/${stockItem.inventory.id}`, {
         quantity: parseInt(newStockQty),
       });
-      alert("✅ Stock updated successfully!");
+      showSuccess("Stock updated successfully!");
       setShowStockModal(false);
       setStockItem(null);
       fetchMenu(); // Refresh menu to get updated stock
     } catch (err) {
-      alert(
-        "❌ Failed to update stock: " +
-          (err.response?.data?.error || err.message),
+      showError(
+        "Failed to update stock: " +
+          (err.response?.data?.error || err.message)
       );
     }
   };

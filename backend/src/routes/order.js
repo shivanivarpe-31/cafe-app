@@ -7,6 +7,7 @@ const { prisma } = require('../prisma');
 router.post('/', auth, orderController.createOrder);
 router.get('/', auth, orderController.getOrders);
 router.get('/active', auth, orderController.getActiveOrders);
+router.put('/:id', auth, orderController.updateOrder);
 router.put('/:id/status', auth, orderController.updateOrderStatus);
 router.get('/tables', auth, orderController.getTables);
 

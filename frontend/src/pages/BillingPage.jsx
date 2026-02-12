@@ -14,15 +14,25 @@ import {
 } from "lucide-react";
 import Navbar from "../components/navbar";
 import { useSmartPolling } from "../hooks/useSmartPolling";
+import {
+  formatApiError,
+  getUserFriendlyMessage,
+  logError,
+} from "../utils/errorHandler";
+import ErrorDisplay from "../components/ErrorDisplay";
+import { LoadingSection, SkeletonGrid, SkeletonCard, Spinner } from "../components/Loading";
+import { EmptyCart, EmptySearchResults, EmptyTables, EmptyMenu } from "../components/EmptyState";
+import { showSuccess, showError, showWarning } from "../utils/toast";
 
 const BillingPage = () => {
-  const { menuItems } = useMenu();
+  const { menuItems, loading: menuLoading } = useMenu();
   const [tables, setTables] = useState([]);
   const [cart, setCart] = useState([]);
   const [tableId, setTableId] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   // NEW: Modifications state
   const [modifications, setModifications] = useState({ all: [], grouped: {} });
@@ -98,9 +108,9 @@ const BillingPage = () => {
   // Smart polling for tables (only when page is visible and user is active)
   useSmartPolling(
     fetchTables,
-    30000,  // Poll every 30 seconds when user is active
+    30000, // Poll every 30 seconds when user is active
     120000, // Poll every 2 minutes when user is inactive
-    300000  // Consider user inactive after 5 minutes of no activity
+    300000, // Consider user inactive after 5 minutes of no activity
   );
 
   // Listen for order updates from other components
@@ -117,7 +127,7 @@ const BillingPage = () => {
 
   const addToCart = (item) => {
     if (!item.inventory || item.inventory.quantity <= 0) {
-      alert(`❌ ${item.name} is out of stock!`);
+      showError(`${item.name} is out of stock!`);
       return;
     }
 
@@ -134,8 +144,8 @@ const BillingPage = () => {
     if (existingIndex >= 0) {
       const existing = cart[existingIndex];
       if (existing.quantity + 1 > item.inventory.quantity) {
-        alert(
-          `❌ Only ${item.inventory.quantity} ${item.name} available in stock!`,
+        showWarning(
+          `Only ${item.inventory.quantity} ${item.name} available in stock!`,
         );
         return;
       }
@@ -167,7 +177,7 @@ const BillingPage = () => {
     const item = cart[index];
     const menuItem = menuItems.find((m) => m.id === item.menuItemId);
     if (menuItem && menuItem.inventory && qty > menuItem.inventory.quantity) {
-      alert(`❌ Only ${menuItem.inventory.quantity} ${item.name} available!`);
+      showWarning(`Only ${menuItem.inventory.quantity} ${item.name} available!`);
       return;
     }
     const updated = [...cart];
@@ -242,16 +252,16 @@ const BillingPage = () => {
 
   const placeOrder = async () => {
     if (cart.length === 0) {
-      alert("❌ Cart is empty!");
+      showWarning("Cart is empty!");
       return;
     }
     if (!tableId) {
-      alert("❌ Please select a table!");
+      showWarning("Please select a table!");
       return;
     }
     const table = tables.find((t) => t.id === tableId);
     if (!table) {
-      alert("Invalid table selected");
+      showError("Invalid table selected");
       return;
     }
 
@@ -261,16 +271,16 @@ const BillingPage = () => {
       const now = new Date();
       if (from && to) {
         if (now < from || now > to) {
-          alert(
-            `❌ Table ${getTableLabel(
+          showWarning(
+            `Table ${getTableLabel(
               table,
             )} is reserved from ${from.toLocaleString()} to ${to.toLocaleString()}. Orders can be placed only during the reserved window.`,
           );
           return;
         }
       } else {
-        alert(
-          `❌ Table ${getTableLabel(
+        showWarning(
+          `Table ${getTableLabel(
             table,
           )} is reserved. You can only place orders during the reservation window.`,
         );
@@ -279,6 +289,7 @@ const BillingPage = () => {
     }
 
     setLoading(true);
+    setError(null); // Clear previous errors
     try {
       // UPDATED: Include notes and modifications
       const orderItems = cart.map((item) => ({
@@ -297,21 +308,30 @@ const BillingPage = () => {
         throw new Error("Invalid order response");
       }
 
-      // Move to preparing
-      await axios.put(`/api/orders/${createdOrder.id}/status`, {
-        status: "preparing",
-      });
-
-      alert(
-        `✅ Order ${billNumber} sent to kitchen for Table ${getTableLabel(
+      // Order stays in PENDING status - kitchen can review and edit before preparing
+      showSuccess(
+        `Order ${billNumber} placed for Table ${getTableLabel(
           table,
-        )}`,
+        )} - Pending kitchen review`,
       );
 
       setCart([]);
       fetchTables();
     } catch (err) {
-      alert("❌ Order failed: " + (err.response?.data?.error || err.message));
+      logError('Place Order', err);
+      const apiError = formatApiError(err, 'Failed to create order');
+      const friendlyError = getUserFriendlyMessage(apiError.code, apiError.details);
+
+      // Set structured error for display
+      setError({
+        ...friendlyError,
+        message: apiError.message,
+        code: apiError.code,
+        details: apiError.details,
+      });
+
+      // Scroll to top to show error
+      window.scrollTo({ top: 0, behavior: 'smooth' });
     } finally {
       setLoading(false);
     }
@@ -386,6 +406,17 @@ const BillingPage = () => {
         </div>
       </div>
 
+      {/* Error Display */}
+      {error && (
+        <div className="max-w-7xl mx-auto px-6 pt-6">
+          <ErrorDisplay
+            error={error}
+            onDismiss={() => setError(null)}
+            className="animate-fadeIn"
+          />
+        </div>
+      )}
+
       <div className="max-w-7xl mx-auto px-6 py-8">
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           {/* Menu Section */}
@@ -422,52 +453,64 @@ const BillingPage = () => {
             </div>
 
             {/* Menu Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
-              {filteredItems.map((item) => (
-                <div
-                  key={item.id}
-                  onClick={() => addToCart(item)}
-                  className="bg-white rounded-2xl shadow-sm border-2 border-gray-200 p-4 hover:shadow-lg hover:border-red-300 transition-all cursor-pointer group relative"
-                >
-                  <div className="aspect-square bg-gray-100 rounded-xl mb-3 flex items-center justify-center group-hover:bg-red-50 transition-colors">
-                    <span className="text-4xl">🍽️</span>
-                  </div>
-                  <h3 className="font-semibold text-gray-900 text-sm mb-1 truncate">
-                    {item.name}
-                  </h3>
-                  <p className="text-xs text-gray-500 mb-2">
-                    {item.category?.name}
-                  </p>
-                  <div className="flex items-center justify-between">
-                    <p className="text-lg font-bold text-red-600">
-                      ₹{item.price}
+            {menuLoading ? (
+              <SkeletonGrid items={8} columns={4} />
+            ) : filteredItems.length === 0 ? (
+              searchTerm ? (
+                <EmptySearchResults
+                  searchTerm={searchTerm}
+                  onClearSearch={() => setSearchTerm("")}
+                />
+              ) : menuItems.length === 0 ? (
+                <EmptyMenu />
+              ) : (
+                <EmptySearchResults
+                  searchTerm={selectedCategory !== "All" ? selectedCategory : ""}
+                  onClearSearch={() => setSelectedCategory("All")}
+                />
+              )
+            ) : (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
+                {filteredItems.map((item) => (
+                  <div
+                    key={item.id}
+                    onClick={() => addToCart(item)}
+                    className="bg-white rounded-2xl shadow-sm border-2 border-gray-200 p-4 hover:shadow-lg hover:border-red-300 transition-all cursor-pointer group relative"
+                  >
+                    <div className="aspect-square bg-gray-100 rounded-xl mb-3 flex items-center justify-center group-hover:bg-red-50 transition-colors">
+                      <span className="text-4xl">🍽️</span>
+                    </div>
+                    <h3 className="font-semibold text-gray-900 text-sm mb-1 truncate">
+                      {item.name}
+                    </h3>
+                    <p className="text-xs text-gray-500 mb-2">
+                      {item.category?.name}
                     </p>
-                    <span
-                      className={`text-xs px-2 py-1 rounded-full font-medium ${
-                        item.inventory?.quantity === 0
-                          ? "bg-red-100 text-red-700"
-                          : item.inventory?.lowStock
-                          ? "bg-orange-100 text-orange-700"
-                          : "bg-green-100 text-green-700"
-                      }`}
-                    >
-                      {item.inventory?.quantity ?? 0}
-                    </span>
-                  </div>
-                  {item.inventory?.quantity === 0 && (
-                    <div className="absolute inset-0 bg-gray-900/50 rounded-2xl flex items-center justify-center">
-                      <span className="text-white font-bold text-sm">
-                        OUT OF STOCK
+                    <div className="flex items-center justify-between">
+                      <p className="text-lg font-bold text-red-600">
+                        ₹{item.price}
+                      </p>
+                      <span
+                        className={`text-xs px-2 py-1 rounded-full font-medium ${
+                          item.inventory?.quantity === 0
+                            ? "bg-red-100 text-red-700"
+                            : item.inventory?.lowStock
+                            ? "bg-orange-100 text-orange-700"
+                            : "bg-green-100 text-green-700"
+                        }`}
+                      >
+                        {item.inventory?.quantity ?? 0}
                       </span>
                     </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
-            {filteredItems.length === 0 && (
-              <div className="bg-white rounded-2xl border-2 border-dashed border-gray-300 p-12 text-center">
-                <p className="text-gray-500">No items found</p>
+                    {item.inventory?.quantity === 0 && (
+                      <div className="absolute inset-0 bg-gray-900/50 rounded-2xl flex items-center justify-center">
+                        <span className="text-white font-bold text-sm">
+                          OUT OF STOCK
+                        </span>
+                      </div>
+                    )}
+                  </div>
+                ))}
               </div>
             )}
           </div>
@@ -505,13 +548,7 @@ const BillingPage = () => {
               {/* Cart Items */}
               <div className="p-6 max-h-96 overflow-y-auto">
                 {cart.length === 0 ? (
-                  <div className="text-center py-12">
-                    <ShoppingCart className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-                    <p className="text-gray-500 text-sm">Cart is empty</p>
-                    <p className="text-gray-400 text-xs mt-1">
-                      Add items from menu
-                    </p>
-                  </div>
+                  <EmptyCart />
                 ) : (
                   <div className="space-y-3">
                     {cart.map((item, index) => (

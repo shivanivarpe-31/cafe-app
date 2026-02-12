@@ -1,4 +1,10 @@
 const { prisma, Prisma } = require('../prisma');
+const {
+    createInsufficientStockError,
+    createNotFoundError,
+    createValidationError,
+    createOrderStatusError,
+} = require('../utils/errors');
 
 // Generate unique bill number
 const generateBillNumber = () => {
@@ -109,7 +115,7 @@ exports.createOrder = async (req, res, next) => {
     try {
         const { tableId, orderItems } = req.body;
         if (!tableId || !orderItems || orderItems.length === 0) {
-            return res.status(400).json({ error: 'Table and order items are required' });
+            throw createValidationError('orderItems', 'Table and order items are required');
         }
 
         // Calculate totals including modifications
@@ -139,11 +145,7 @@ exports.createOrder = async (req, res, next) => {
             const missingIngredients = await checkIngredientAvailability(tx, orderItems);
 
             if (missingIngredients.length > 0) {
-                const errorMsg = missingIngredients.map(m =>
-                    `${m.menuItem}: Need ${m.required.toFixed(1)}${m.unit} of ${m.ingredient}, only ${m.available.toFixed(1)} available`
-                ).join('; ');
-
-                throw new Error(`Insufficient ingredients: ${errorMsg}`);
+                throw createInsufficientStockError(missingIngredients);
             }
 
             // Create order
@@ -233,12 +235,168 @@ exports.createOrder = async (req, res, next) => {
         });
     } catch (error) {
         console.error('Create order error:', error);
+        next(error);
+    }
+};
 
-        if (error.message && error.message.includes('Insufficient ingredients')) {
-            return res.status(400).json({ error: error.message });
+// Update order items (only for PENDING orders)
+exports.updateOrder = async (req, res, next) => {
+    try {
+        const orderId = parseInt(req.params.id, 10);
+        const { orderItems } = req.body;
+
+        if (!Number.isFinite(orderId)) {
+            throw createValidationError('orderId', 'Invalid order id');
         }
 
-        return res.status(500).json({ error: 'Failed to create order: ' + error.message });
+        if (!orderItems || orderItems.length === 0) {
+            throw createValidationError('orderItems', 'Order items are required');
+        }
+
+        // Get existing order
+        const existingOrder = await prisma.order.findUnique({
+            where: { id: orderId },
+            include: {
+                items: true,
+                table: true
+            }
+        });
+
+        if (!existingOrder) {
+            throw createNotFoundError('Order', orderId);
+        }
+
+        // Only allow editing PENDING orders
+        if (existingOrder.status !== 'PENDING') {
+            throw createOrderStatusError(
+                'Order can only be edited when in PENDING status',
+                existingOrder.status,
+                'PENDING'
+            );
+        }
+
+        // Calculate new totals including modifications
+        let subtotal = 0;
+
+        for (const item of orderItems) {
+            // Base price
+            let itemTotal = parseFloat(item.price) * item.quantity;
+
+            // Add modification charges
+            if (item.modifications && item.modifications.length > 0) {
+                for (const mod of item.modifications) {
+                    itemTotal += parseFloat(mod.price || 0) * (mod.quantity || 1) * item.quantity;
+                }
+            }
+
+            subtotal += itemTotal;
+        }
+
+        const tax = subtotal * 0.05;
+        const total = subtotal + tax;
+
+        const updatedOrder = await prisma.$transaction(async (tx) => {
+            // Check ingredient availability for new items
+            const missingIngredients = await checkIngredientAvailability(tx, orderItems);
+
+            if (missingIngredients.length > 0) {
+                throw createInsufficientStockError(missingIngredients);
+            }
+
+            // Delete existing order items and their modifications
+            await tx.orderItemModification.deleteMany({
+                where: {
+                    orderItem: {
+                        orderId: orderId
+                    }
+                }
+            });
+
+            await tx.orderItem.deleteMany({
+                where: { orderId: orderId }
+            });
+
+            // Update order with new items and totals
+            const order = await tx.order.update({
+                where: { id: orderId },
+                data: {
+                    subtotal,
+                    tax,
+                    total,
+                    updatedAt: new Date(),
+                    items: {
+                        create: orderItems.map(item => ({
+                            menuItemId: item.menuItemId,
+                            quantity: item.quantity,
+                            price: parseFloat(item.price),
+                            notes: item.notes || null
+                        }))
+                    }
+                },
+                include: {
+                    table: true,
+                    items: {
+                        include: {
+                            menuItem: { include: { category: true } }
+                        }
+                    }
+                }
+            });
+
+            // Add modifications to new order items
+            for (let i = 0; i < orderItems.length; i++) {
+                const item = orderItems[i];
+                const createdOrderItem = order.items[i];
+
+                if (item.modifications && item.modifications.length > 0) {
+                    for (const mod of item.modifications) {
+                        await tx.orderItemModification.create({
+                            data: {
+                                orderItemId: createdOrderItem.id,
+                                modificationId: mod.id,
+                                quantity: mod.quantity || 1,
+                                price: parseFloat(mod.price || 0)
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Update table current bill
+            await tx.table.update({
+                where: { id: existingOrder.tableId },
+                data: {
+                    currentBill: total,
+                    updatedAt: new Date()
+                }
+            });
+
+            // Fetch complete updated order with modifications
+            const completeOrder = await tx.order.findUnique({
+                where: { id: orderId },
+                include: {
+                    table: true,
+                    items: {
+                        include: {
+                            menuItem: { include: { category: true } },
+                            modifications: {
+                                include: { modification: true }
+                            }
+                        }
+                    }
+                }
+            });
+
+            return completeOrder;
+        });
+
+        res.json({
+            message: 'Order updated successfully',
+            order: updatedOrder
+        });
+    } catch (error) {
+        console.error('Update order error:', error);
+        next(error);
     }
 };
 
@@ -333,20 +491,20 @@ exports.getActiveOrders = async (req, res, next) => {
     }
 };
 
-exports.updateOrderStatus = async (req, res) => {
+exports.updateOrderStatus = async (req, res, next) => {
     try {
         const { status: rawStatus, paymentMode } = req.body;
         const orderId = parseInt(req.params.id, 10);
 
         if (!Number.isFinite(orderId)) {
-            return res.status(400).json({ error: 'Invalid order id' });
+            throw createValidationError('orderId', 'Invalid order id');
         }
 
         const validStatuses = ['PENDING', 'PREPARING', 'SERVED', 'PAID', 'CANCELLED'];
         const status = String(rawStatus || '').toUpperCase();
 
         if (!validStatuses.includes(status)) {
-            return res.status(400).json({ error: 'Invalid status value' });
+            throw createValidationError('status', `Invalid status value. Must be one of: ${validStatuses.join(', ')}`);
         }
 
         // First, get the order with its table and items
@@ -360,7 +518,7 @@ exports.updateOrderStatus = async (req, res) => {
         });
 
         if (!existingOrder) {
-            return res.status(404).json({ error: 'Order not found' });
+            throw createNotFoundError('Order', orderId);
         }
 
         const updateData = {
@@ -382,11 +540,7 @@ exports.updateOrderStatus = async (req, res) => {
                 const missingIngredients = await checkIngredientAvailability(tx, existingOrder.items, true);
 
                 if (missingIngredients.length > 0) {
-                    const errorMsg = missingIngredients.map(m =>
-                        `${m.menuItem}: Need ${m.required.toFixed(1)}${m.unit} of ${m.ingredient}, only ${m.available.toFixed(1)} available`
-                    ).join('; ');
-
-                    throw new Error(`Insufficient ingredients: ${errorMsg}`);
+                    throw createInsufficientStockError(missingIngredients);
                 }
 
                 // Deduct ingredients

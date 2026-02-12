@@ -1,5 +1,6 @@
 import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
+import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';  // Create next
@@ -23,6 +24,7 @@ function AppContent() {
   return (
     <Router>
       <MenuProvider>
+        <Toaster />
         <Routes>
           <Route path="/login" element={<Login />} />
           <Route path="/dashboard" element={

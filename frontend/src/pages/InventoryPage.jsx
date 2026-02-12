@@ -17,6 +17,7 @@ import {
   ChefHat,
 } from "lucide-react";
 import Navbar from "../components/navbar";
+import { showSuccess, showError, showWarning } from "../utils/toast";
 
 const InventoryPage = () => {
   // State
@@ -109,16 +110,16 @@ const InventoryPage = () => {
 
       if (editMode) {
         await axios.put(`/api/ingredients/${editingId}`, data);
-        alert("✅ Ingredient updated!");
+        showSuccess("Ingredient updated!");
       } else {
         await axios.post("/api/ingredients", data);
-        alert("✅ Ingredient added!");
+        showSuccess("Ingredient added!");
       }
 
       cancelForm();
       fetchIngredients();
     } catch (err) {
-      alert("❌ Error: " + (err.response?.data?.error || err.message));
+      showError("Error: " + (err.response?.data?.error || err.message));
     }
   };
 
@@ -141,10 +142,10 @@ const InventoryPage = () => {
 
     try {
       await axios.delete(`/api/ingredients/${id}`);
-      alert("✅ Ingredient deleted!");
+      showSuccess("Ingredient deleted!");
       fetchIngredients();
     } catch (err) {
-      alert("❌ Error: " + (err.response?.data?.error || err.message));
+      showError("Error: " + (err.response?.data?.error || err.message));
     }
   };
 
@@ -173,7 +174,7 @@ const InventoryPage = () => {
 
   const handleStockUpdate = async () => {
     if (!stockQuantity || parseFloat(stockQuantity) <= 0) {
-      alert("Please enter a valid quantity");
+      showWarning("Please enter a valid quantity");
       return;
     }
 
@@ -184,16 +185,16 @@ const InventoryPage = () => {
         {
           quantity: parseFloat(stockQuantity),
           notes: stockNotes,
-        },
+        }
       );
 
-      alert(
-        `✅ Stock ${stockModalType === "add" ? "added" : "wastage recorded"}!`,
+      showSuccess(
+        `Stock ${stockModalType === "add" ? "added" : "wastage recorded"}!`
       );
       setShowStockModal(false);
       fetchIngredients();
     } catch (err) {
-      alert("❌ Error: " + (err.response?.data?.error || err.message));
+      showError("Error: " + (err.response?.data?.error || err.message));
     }
   };
 
@@ -205,7 +206,7 @@ const InventoryPage = () => {
       setSelectedIngredient(ingredient);
       setShowLogsModal(true);
     } catch (err) {
-      alert("❌ Failed to fetch logs");
+      showError("Failed to fetch logs");
     }
   };
 
@@ -265,11 +266,11 @@ const InventoryPage = () => {
         })),
       });
 
-      alert("✅ Recipe saved!");
+      showSuccess("Recipe saved!");
       setShowRecipeModal(false);
       fetchMenuItems();
     } catch (err) {
-      alert("❌ Error: " + (err.response?.data?.error || err.message));
+      showError("Error: " + (err.response?.data?.error || err.message));
     }
   };
 

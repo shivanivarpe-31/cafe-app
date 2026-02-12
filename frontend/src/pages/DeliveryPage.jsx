@@ -19,6 +19,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 import Navbar from "../components/navbar";
+import { showSuccess, showError, showWarning } from "../utils/toast";
 
 const DeliveryPage = () => {
   const { menuItems } = useMenu();
@@ -134,15 +135,15 @@ const DeliveryPage = () => {
   // Place order
   const placeOrder = async () => {
     if (!customerName || !customerPhone) {
-      alert("❌ Customer name and phone are required");
+      showWarning("Customer name and phone are required");
       return;
     }
     if (orderType === "DELIVERY" && !deliveryAddress) {
-      alert("❌ Delivery address is required");
+      showWarning("Delivery address is required");
       return;
     }
     if (cart.length === 0) {
-      alert("❌ Cart is empty");
+      showWarning("Cart is empty");
       return;
     }
 
@@ -174,10 +175,10 @@ const DeliveryPage = () => {
 
       const res = await axios.post(endpoint, payload);
 
-      alert(
-        `✅ ${
+      showSuccess(
+        `${
           orderType === "TAKEAWAY" ? "Takeaway" : "Delivery"
-        } order created! Bill: ${res.data.billNumber}`,
+        } order created! Bill: ${res.data.billNumber}`
       );
 
       // Reset form
@@ -190,7 +191,7 @@ const DeliveryPage = () => {
       setEstimatedTime("");
       setPlatformOrderId("");
     } catch (err) {
-      alert("❌ Order failed: " + (err.response?.data?.error || err.message));
+      showError("Order failed: " + (err.response?.data?.error || err.message));
     } finally {
       setLoading(false);
     }
@@ -205,7 +206,7 @@ const DeliveryPage = () => {
       fetchOrders();
       fetchStats();
     } catch (err) {
-      alert("❌ Failed to update status");
+      showError("Failed to update status");
     }
   };
 

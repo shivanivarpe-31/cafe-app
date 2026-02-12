@@ -19,6 +19,7 @@ import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import Navbar from "../components/navbar";
 import { useSmartPolling } from "../hooks/useSmartPolling";
+import { showSuccess, showError, showWarning } from "../utils/toast";
 
 const Dashboard = () => {
   const { menuItems } = useMenu();
@@ -268,9 +269,9 @@ const Dashboard = () => {
   // Smart polling for dashboard data (only when page is visible and user is active)
   useSmartPolling(
     fetchDashboardData,
-    60000,  // Poll every 1 minute when user is active
+    60000, // Poll every 1 minute when user is active
     180000, // Poll every 3 minutes when user is inactive
-    300000  // Consider user inactive after 5 minutes of no activity
+    300000, // Consider user inactive after 5 minutes of no activity
   );
 
   // Listen for order updates from other components
@@ -320,7 +321,7 @@ const Dashboard = () => {
       reservedUntil,
     } = reservationData;
     if (!tableId || !customerName || !reservedFrom || !reservedUntil) {
-      alert(
+      showWarning(
         "Please fill table, customer name, start and end times for the reservation.",
       );
       return;
@@ -329,11 +330,11 @@ const Dashboard = () => {
     const from = new Date(reservedFrom);
     const to = new Date(reservedUntil);
     if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
-      alert("Invalid reservation dates.");
+      showWarning("Invalid reservation dates.");
       return;
     }
     if (from >= to) {
-      alert("Reservation start must be earlier than end.");
+      showWarning("Reservation start must be earlier than end.");
       return;
     }
 
@@ -355,10 +356,10 @@ const Dashboard = () => {
       });
       setShowReservationForm(false);
       fetchDashboardData();
-      alert("✅ Reservation created successfully!");
+      showSuccess("Reservation created successfully!");
     } catch (err) {
       console.error("Reservation error:", err);
-      alert("❌ Failed to create reservation");
+      showError("Failed to create reservation");
     }
   };
 
@@ -377,7 +378,7 @@ const Dashboard = () => {
       fetchDashboardData();
     } catch (err) {
       console.error("Failed to update status:", err);
-      alert("❌ Failed to update status");
+      showError("Failed to update status");
     }
   };
 
@@ -401,7 +402,7 @@ const Dashboard = () => {
       fetchDashboardData();
     } catch (err) {
       console.error("Failed to simulate order:", err);
-      alert("❌ Failed to simulate order");
+      showError("Failed to simulate order");
     }
   };
 

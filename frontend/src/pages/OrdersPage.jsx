@@ -14,12 +14,15 @@ import {
   RefreshCw,
   X,
   CreditCard,
+  Edit,
 } from "lucide-react";
 import Navbar from "../components/navbar";
 import PaymentModal from "../components/PaymentModal";
 import PaymentSuccess from "../components/PaymentSuccess";
 import CollectPaymentModal from "../components/CollectPaymentModal";
+import EditOrderModal from "../components/EditOrderModal";
 import { useSmartPolling } from "../hooks/useSmartPolling";
+import { showSuccess, showError } from "../utils/toast";
 
 const OrdersPage = () => {
   const [orders, setOrders] = useState([]);
@@ -38,7 +41,13 @@ const OrdersPage = () => {
 
   // Collect payment modal states
   const [showCollectPaymentModal, setShowCollectPaymentModal] = useState(false);
-  const [selectedOrderForCollection, setSelectedOrderForCollection] = useState(null);
+  const [selectedOrderForCollection, setSelectedOrderForCollection] = useState(
+    null,
+  );
+
+  // Edit order modal states
+  const [showEditOrderModal, setShowEditOrderModal] = useState(false);
+  const [selectedOrderForEdit, setSelectedOrderForEdit] = useState(null);
 
   // Define fetchOrders with useCallback before using it in useSmartPolling
   const fetchOrders = useCallback(async () => {
@@ -56,9 +65,9 @@ const OrdersPage = () => {
   // Smart polling for orders (only when page is visible and user is active)
   useSmartPolling(
     fetchOrders,
-    30000,  // Poll every 30 seconds when user is active
+    30000, // Poll every 30 seconds when user is active
     120000, // Poll every 2 minutes when user is inactive
-    300000  // Consider user inactive after 5 minutes of no activity
+    300000, // Consider user inactive after 5 minutes of no activity
   );
 
   useEffect(() => {
@@ -91,13 +100,13 @@ const OrdersPage = () => {
       await axios.put(`/api/orders/${orderId}/status`, {
         status: newStatus.toUpperCase(),
       });
-      alert(`✅ Order status updated to ${newStatus.toUpperCase()}`);
+      showSuccess(`Order status updated to ${newStatus.toUpperCase()}`);
       fetchOrders();
       if (selectedOrder?.id === orderId) {
         setSelectedOrder({ ...selectedOrder, status: newStatus.toUpperCase() });
       }
     } catch (err) {
-      alert("❌ Failed to update order status");
+      showError("Failed to update order status");
       console.error(err);
     }
   };
@@ -127,14 +136,14 @@ const OrdersPage = () => {
     try {
       // Fetch the order with detailed payment info
       const res = await axios.get(`/api/orders/pending-payments`);
-      const orderWithPayments = res.data.orders.find(o => o.id === order.id);
+      const orderWithPayments = res.data.orders.find((o) => o.id === order.id);
       if (orderWithPayments) {
         setSelectedOrderForCollection(orderWithPayments);
         setShowCollectPaymentModal(true);
       }
     } catch (err) {
       console.error("Failed to fetch payment details:", err);
-      alert("❌ Failed to load payment details");
+      showError("Failed to load payment details");
     }
   };
 
@@ -142,7 +151,21 @@ const OrdersPage = () => {
     setShowCollectPaymentModal(false);
     setSelectedOrderForCollection(null);
     fetchOrders();
-    alert("✅ Payment collected successfully!");
+    showSuccess("Payment collected successfully!");
+  };
+
+  // Edit order handlers
+  const handleEditOrderClick = (order) => {
+    setSelectedOrderForEdit(order);
+    setShowEditOrderModal(true);
+  };
+
+  const handleOrderUpdated = (updatedOrder) => {
+    setShowEditOrderModal(false);
+    setSelectedOrderForEdit(null);
+    fetchOrders();
+    // Dispatch event for other components
+    window.dispatchEvent(new Event("order-updated"));
   };
 
   const viewOrderDetails = (order) => {
@@ -350,14 +373,25 @@ const OrdersPage = () => {
           {filteredOrders.map((order) => (
             <div
               key={order.id}
-              className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-lg transition-all"
+              className={`bg-white rounded-2xl shadow-sm overflow-hidden hover:shadow-lg transition-all ${
+                order.status === "PENDING"
+                  ? "border-2 border-blue-300 ring-2 ring-blue-100"
+                  : "border border-gray-200"
+              }`}
             >
               {/* Order Header */}
               <div className="p-4 border-b border-gray-100">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="font-bold text-gray-900">
-                    {order.billNumber}
-                  </span>
+                  <div className="flex items-center space-x-2">
+                    <span className="font-bold text-gray-900">
+                      {order.billNumber}
+                    </span>
+                    {order.status === "PENDING" && (
+                      <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full font-medium">
+                        Editable
+                      </span>
+                    )}
+                  </div>
                   {getStatusBadge(order.status)}
                 </div>
                 <div className="flex items-center justify-between text-sm text-gray-500">
@@ -404,12 +438,21 @@ const OrdersPage = () => {
                 {/* Action Buttons */}
                 <div className="flex space-x-2">
                   {order.status === "PENDING" && (
-                    <button
-                      onClick={() => updateOrderStatus(order.id, "PREPARING")}
-                      className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg"
-                    >
-                      Start Preparing
-                    </button>
+                    <>
+                      <button
+                        onClick={() => handleEditOrderClick(order)}
+                        className="p-2 bg-blue-100 hover:bg-blue-200 text-blue-600 rounded-lg"
+                        title="Edit Order"
+                      >
+                        <Edit className="w-4 h-4" />
+                      </button>
+                      <button
+                        onClick={() => updateOrderStatus(order.id, "PREPARING")}
+                        className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg"
+                      >
+                        Start Preparing
+                      </button>
+                    </>
                   )}
                   {order.status === "PREPARING" && (
                     <button
@@ -575,6 +618,14 @@ const OrdersPage = () => {
         onClose={() => setShowCollectPaymentModal(false)}
         order={selectedOrderForCollection}
         onPaymentSuccess={handleCollectPaymentSuccess}
+      />
+
+      {/* Edit Order Modal */}
+      <EditOrderModal
+        isOpen={showEditOrderModal}
+        onClose={() => setShowEditOrderModal(false)}
+        order={selectedOrderForEdit}
+        onOrderUpdated={handleOrderUpdated}
       />
     </div>
   );

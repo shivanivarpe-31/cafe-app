@@ -33,6 +33,7 @@ import {
   Cell,
 } from "recharts";
 import Navbar from "../components/navbar";
+import { showError } from "../utils/toast";
 
 const ReportsPage = () => {
   const [stats, setStats] = useState({
@@ -356,7 +357,7 @@ const ReportsPage = () => {
       pdf.save("sales-report-" + Date.now() + ".pdf");
     } catch (e) {
       console.error(e);
-      alert("Error generating PDF");
+      showError("Error generating PDF");
     } finally {
       setExporting(false);
     }
