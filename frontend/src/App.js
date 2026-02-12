@@ -11,6 +11,7 @@ import OrdersPage from "./pages/OrdersPage";
 import InventoryPage from "./pages/InventoryPage";
 import ProfitAnalysisPage from "./pages/ProfitAnalysisPage";
 import DeliveryPage from "./pages/DeliveryPage";
+import PendingPaymentsPage from "./pages/PendingPaymentsPage";
 
 const ProtectedRoute = ({ children }) => {
   const { user, loading } = useAuth();
@@ -55,6 +56,11 @@ function AppContent() {
           <Route path="/delivery" element={
             <ProtectedRoute>
               <DeliveryPage />
+            </ProtectedRoute>
+          } />
+          <Route path="/pending-payments" element={
+            <ProtectedRoute>
+              <PendingPaymentsPage />
             </ProtectedRoute>
           } />
         </Routes>

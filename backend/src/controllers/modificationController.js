@@ -1,4 +1,4 @@
-const prisma = require('../prisma');
+const { prisma } = require('../prisma');
 
 // Get all modifications
 exports.getModifications = async (req, res, next) => {

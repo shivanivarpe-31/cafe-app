@@ -13,6 +13,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 import Navbar from "../components/navbar";
+import { useSmartPolling } from "../hooks/useSmartPolling";
 
 const BillingPage = () => {
   const { menuItems } = useMenu();
@@ -89,21 +90,30 @@ const BillingPage = () => {
     }
   }, []);
 
-  // Fetch tables on mount
+  // Fetch tables on mount and set up smart polling
   useEffect(() => {
-    fetchTables();
-    fetchModifications();
-    const interval = setInterval(fetchTables, 30000);
+    fetchModifications(); // Fetch once
+  }, [fetchModifications]);
+
+  // Smart polling for tables (only when page is visible and user is active)
+  useSmartPolling(
+    fetchTables,
+    30000,  // Poll every 30 seconds when user is active
+    120000, // Poll every 2 minutes when user is inactive
+    300000  // Consider user inactive after 5 minutes of no activity
+  );
+
+  // Listen for order updates from other components
+  useEffect(() => {
     const handleOrderUpdated = () => {
       fetchTables();
     };
     window.addEventListener("order-updated", handleOrderUpdated);
 
     return () => {
-      clearInterval(interval);
       window.removeEventListener("order-updated", handleOrderUpdated);
     };
-  }, [fetchTables, fetchModifications]);
+  }, [fetchTables]);
 
   const addToCart = (item) => {
     if (!item.inventory || item.inventory.quantity <= 0) {

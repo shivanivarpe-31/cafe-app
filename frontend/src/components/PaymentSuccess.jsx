@@ -1,5 +1,5 @@
 import React from "react";
-import { CheckCircle, Download, Printer, X } from "lucide-react";
+import { CheckCircle, Printer } from "lucide-react";
 
 const PaymentSuccess = ({ isOpen, onClose, order, paymentId }) => {
   if (!isOpen || !order) return null;
@@ -7,6 +7,9 @@ const PaymentSuccess = ({ isOpen, onClose, order, paymentId }) => {
   const handlePrint = () => {
     window.print();
   };
+
+  // Detect split payment
+  const isSplitPayment = order.paymentMode?.includes("+");
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -30,18 +33,77 @@ const PaymentSuccess = ({ isOpen, onClose, order, paymentId }) => {
               {order.billNumber}
             </span>
           </div>
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm text-gray-600">Amount Paid</span>
-            <span className="font-bold text-green-600">
-              ₹{parseFloat(order.total).toFixed(2)}
-            </span>
-          </div>
-          <div className="flex justify-between items-center mb-2">
-            <span className="text-sm text-gray-600">Payment Mode</span>
-            <span className="font-medium text-gray-700">
-              {order.paymentMode}
-            </span>
-          </div>
+
+          {isSplitPayment ? (
+            /* Split Payment Details */
+            <>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-gray-600">Payment Type</span>
+                <span className="font-semibold text-orange-600">
+                  Split Payment
+                </span>
+              </div>
+              {order.payments && order.payments.length > 0 ? (
+                <>
+                  {order.payments.map((payment, idx) => (
+                    <div
+                      key={payment.id || idx}
+                      className="flex justify-between items-center mb-2 pl-4"
+                    >
+                      <span className="text-sm text-gray-600">
+                        {payment.paymentMode}
+                      </span>
+                      <span className="font-medium text-gray-700">
+                        ₹{parseFloat(payment.amount).toFixed(2)}
+                      </span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between items-center pt-2 border-t border-gray-200">
+                    <span className="text-sm font-semibold text-gray-900">
+                      Total Paid
+                    </span>
+                    <span className="font-bold text-green-600">
+                      ₹{parseFloat(order.total).toFixed(2)}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="flex justify-between items-center mb-2">
+                    <span className="text-sm text-gray-600">
+                      Payment Methods
+                    </span>
+                    <span className="font-medium text-gray-700">
+                      {order.paymentMode}
+                    </span>
+                  </div>
+                  <div className="flex justify-between items-center">
+                    <span className="text-sm text-gray-600">Amount Paid</span>
+                    <span className="font-bold text-green-600">
+                      ₹{parseFloat(order.total).toFixed(2)}
+                    </span>
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            /* Single Payment Details */
+            <>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-gray-600">Amount Paid</span>
+                <span className="font-bold text-green-600">
+                  ₹{parseFloat(order.total).toFixed(2)}
+                </span>
+              </div>
+              <div className="flex justify-between items-center mb-2">
+                <span className="text-sm text-gray-600">Payment Mode</span>
+                <span className="font-medium text-gray-700">
+                  {order.paymentMode}
+                </span>
+              </div>
+            </>
+          )}
+
           {paymentId && (
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-600">Transaction ID</span>

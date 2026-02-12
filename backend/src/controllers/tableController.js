@@ -1,4 +1,4 @@
-const prisma = require('../prisma');
+const { prisma } = require('../prisma');
 const { releaseExpiredReservations, getExpiringReservations } = require('../utils/scheduler');
 
 // Get all tables

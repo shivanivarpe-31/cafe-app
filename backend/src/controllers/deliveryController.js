@@ -1,4 +1,4 @@
-const prisma = require('../prisma');
+const { prisma } = require('../prisma');
 
 // Generate unique bill number for delivery/takeaway
 const generateDeliveryBillNumber = (platform = 'DIRECT') => {

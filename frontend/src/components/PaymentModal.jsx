@@ -7,12 +7,22 @@ import {
   X,
   CheckCircle,
   Loader2,
+  Split,
+  Clock,
 } from "lucide-react";
+import SplitPaymentInterface from "./SplitPaymentInterface";
 
 const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
   const [paymentMode, setPaymentMode] = useState("RAZORPAY");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [showSplitInterface, setShowSplitInterface] = useState(false);
+  const [showPayLaterForm, setShowPayLaterForm] = useState(false);
+  const [payLaterDetails, setPayLaterDetails] = useState({
+    name: "",
+    phone: "",
+    address: "",
+  });
 
   if (!isOpen || !order) return null;
 
@@ -124,7 +134,7 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
     setError("");
 
     try {
-      const res = await axios.put(`/api/orders/${order.id}/status`, {
+      await axios.put(`/api/orders/${order.id}/status`, {
         status: "PAID",
         paymentMode: mode,
       });
@@ -141,9 +151,72 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
     }
   };
 
+  // Handle split payment
+  const handleSplitPayment = async (splitPayments) => {
+    setLoading(true);
+    setError("");
+
+    try {
+      const res = await axios.post("/api/payment/split", {
+        orderId: order.id,
+        payments: splitPayments,
+      });
+
+      if (res.data.success) {
+        onPaymentSuccess({
+          ...order,
+          status: "PAID",
+          paymentMode: `${splitPayments[0].paymentMode}+${splitPayments[1].paymentMode}`,
+          payments: res.data.payments,
+        });
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || "Split payment failed");
+      setShowSplitInterface(false);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle Pay Later
+  const handlePayLater = async () => {
+    setLoading(true);
+    setError("");
+
+    // Validation
+    if (!payLaterDetails.name || !payLaterDetails.phone) {
+      setError("Please enter customer name and phone number");
+      setLoading(false);
+      return;
+    }
+
+    try {
+      const res = await axios.post("/api/orders/pay-later", {
+        orderId: order.id,
+        customerName: payLaterDetails.name,
+        customerPhone: payLaterDetails.phone,
+        customerAddress: payLaterDetails.address,
+      });
+
+      if (res.data.success) {
+        onPaymentSuccess({
+          ...order,
+          status: "PARTIALLY_PAID",
+          paymentMode: "PAY_LATER",
+        });
+      }
+    } catch (err) {
+      setError(err.response?.data?.error || "Failed to create Pay Later order");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handlePayment = () => {
     if (paymentMode === "RAZORPAY") {
       handleRazorpayPayment();
+    } else if (paymentMode === "PAY_LATER") {
+      handlePayLater();
     } else {
       handleManualPayment(paymentMode);
     }
@@ -151,7 +224,7 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+      <div className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <h3 className="text-xl font-bold text-gray-900">Complete Payment</h3>
@@ -288,8 +361,94 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
               </span>
               <span className="text-xs text-gray-500">PhonePe / GPay</span>
             </button>
+
+            <button
+              onClick={() => {
+                setPaymentMode("SPLIT");
+                setShowSplitInterface(true);
+              }}
+              className="p-4 rounded-xl border-2 border-orange-200 hover:border-orange-300 bg-gradient-to-r from-orange-50 to-yellow-50 transition-all flex flex-col items-center space-y-2"
+            >
+              <Split className="w-6 h-6 text-orange-600" />
+              <span className="text-sm font-medium text-orange-600">
+                Split Payment
+              </span>
+              <span className="text-xs text-gray-500">Pay with 2 methods</span>
+            </button>
+
+            <button
+              onClick={() => {
+                setPaymentMode("PAY_LATER");
+                setShowPayLaterForm(true);
+              }}
+              className="p-4 rounded-xl border-2 border-indigo-200 hover:border-indigo-300 bg-gradient-to-r from-indigo-50 to-blue-50 transition-all flex flex-col items-center space-y-2"
+            >
+              <Clock className="w-6 h-6 text-indigo-600" />
+              <span className="text-sm font-medium text-indigo-600">
+                Pay Later
+              </span>
+              <span className="text-xs text-gray-500">
+                Save customer details
+              </span>
+            </button>
           </div>
         </div>
+
+        {/* Pay Later Customer Details Form */}
+        {showPayLaterForm && (
+          <div className="mb-6 p-4 bg-indigo-50 rounded-xl border border-indigo-200">
+            <h4 className="text-sm font-semibold text-gray-900 mb-3">
+              Customer Details
+            </h4>
+            <div className="space-y-3">
+              <input
+                type="text"
+                placeholder="Customer Name *"
+                value={payLaterDetails.name}
+                onChange={(e) =>
+                  setPayLaterDetails({
+                    ...payLaterDetails,
+                    name: e.target.value,
+                  })
+                }
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+              />
+              <input
+                type="tel"
+                placeholder="Phone Number *"
+                value={payLaterDetails.phone}
+                onChange={(e) =>
+                  setPayLaterDetails({
+                    ...payLaterDetails,
+                    phone: e.target.value,
+                  })
+                }
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+              />
+              <textarea
+                placeholder="Address (Optional)"
+                value={payLaterDetails.address}
+                onChange={(e) =>
+                  setPayLaterDetails({
+                    ...payLaterDetails,
+                    address: e.target.value,
+                  })
+                }
+                rows="2"
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Split Payment Interface */}
+        {showSplitInterface && (
+          <SplitPaymentInterface
+            orderTotal={amount}
+            onConfirm={handleSplitPayment}
+            onCancel={() => setShowSplitInterface(false)}
+          />
+        )}
 
         {/* Error Message */}
         {error && (

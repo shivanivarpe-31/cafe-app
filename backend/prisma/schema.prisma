@@ -12,6 +12,7 @@ enum OrderStatus {
   PREPARING
   SERVED
   PAID
+  PARTIALLY_PAID
   CANCELLED
 }
 
@@ -143,8 +144,14 @@ model Order {
   paidAt      DateTime?
   updatedAt   DateTime    @updatedAt
   orderType       OrderType        @default(DINE_IN)
-  deliveryInfo    DeliveryInfo?    
+  deliveryInfo    DeliveryInfo?
   payments            Payment[]  // Add this line
+
+  // Indexes for frequently queried fields
+  @@index([status])
+  @@index([createdAt])
+  @@index([tableId])
+  @@index([status, createdAt]) // Composite index for common queries
 }
 
 model OrderItem {
@@ -155,8 +162,12 @@ model OrderItem {
   menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
   quantity   Int
   price      Decimal  @db.Decimal(10, 2)
-  notes         String?              
+  notes         String?
   modifications OrderItemModification[]
+
+  // Indexes for join queries and groupBy operations
+  @@index([menuItemId])
+  @@index([orderId])
 }
 
 model Modification {
@@ -183,8 +194,8 @@ model OrderItemModification {
 
 model Table {
   id            Int        @id @default(autoincrement())
-  number        Int         @unique 
-  name          String 
+  number        Int         @unique
+  name          String
   capacity      Int         @default(4)
   status        TableStatus @default(AVAILABLE)
   currentBill   Float?     @default(0)
@@ -195,7 +206,10 @@ model Table {
   reservedUntil DateTime?               // changed to DateTime?
   createdAt     DateTime    @default(now())
   updatedAt     DateTime   @updatedAt
-  orders        Order[]   @relation 
+  orders        Order[]   @relation
+
+  // Index for finding available tables
+  @@index([status])
   @@map("tables")
 }
 
@@ -240,28 +254,34 @@ model Payment {
   id                  Int       @id @default(autoincrement())
   orderId             Int
   order               Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  
+
   // Payment details
   amount              Decimal   @db.Decimal(10, 2)
   currency            String    @default("INR")
   paymentMode         String    // RAZORPAY, CASH, CARD, UPI
   status              String    @default("PENDING") // PENDING, SUCCESS, FAILED, REFUNDED
-  
+
   // Razorpay specific
   razorpayOrderId     String?   @unique
   razorpayPaymentId   String?   @unique
   razorpaySignature   String?
-  
+
   // Refund details
   refundId            String?
   refundAmount        Decimal?  @db.Decimal(10, 2)
   refundedAt          DateTime?
-  
+
   // Metadata
   notes               String?   @db.Text
   errorMessage        String?
-  
+
   createdAt           DateTime  @default(now())
   updatedAt           DateTime  @updatedAt
+
+  // Indexes for payment queries
+  @@index([status])
+  @@index([orderId])
+  @@index([paymentMode])
+  @@index([createdAt])
 }
 

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
   Clock,
@@ -13,10 +13,13 @@ import {
   Calendar,
   RefreshCw,
   X,
+  CreditCard,
 } from "lucide-react";
 import Navbar from "../components/navbar";
 import PaymentModal from "../components/PaymentModal";
 import PaymentSuccess from "../components/PaymentSuccess";
+import CollectPaymentModal from "../components/CollectPaymentModal";
+import { useSmartPolling } from "../hooks/useSmartPolling";
 
 const OrdersPage = () => {
   const [orders, setOrders] = useState([]);
@@ -33,18 +36,12 @@ const OrdersPage = () => {
   const [selectedOrderForPayment, setSelectedOrderForPayment] = useState(null);
   const [paymentId, setPaymentId] = useState(null);
 
-  useEffect(() => {
-    fetchOrders();
-    const interval = setInterval(fetchOrders, 30000);
-    return () => clearInterval(interval);
-  }, []);
+  // Collect payment modal states
+  const [showCollectPaymentModal, setShowCollectPaymentModal] = useState(false);
+  const [selectedOrderForCollection, setSelectedOrderForCollection] = useState(null);
 
-  useEffect(() => {
-    filterOrders();
-    // eslint-disable-next-line
-  }, [orders, selectedStatus, searchTerm]);
-
-  const fetchOrders = async () => {
+  // Define fetchOrders with useCallback before using it in useSmartPolling
+  const fetchOrders = useCallback(async () => {
     try {
       setLoading(true);
       const res = await axios.get("/api/orders");
@@ -54,7 +51,20 @@ const OrdersPage = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Smart polling for orders (only when page is visible and user is active)
+  useSmartPolling(
+    fetchOrders,
+    30000,  // Poll every 30 seconds when user is active
+    120000, // Poll every 2 minutes when user is inactive
+    300000  // Consider user inactive after 5 minutes of no activity
+  );
+
+  useEffect(() => {
+    filterOrders();
+    // eslint-disable-next-line
+  }, [orders, selectedStatus, searchTerm]);
 
   const filterOrders = () => {
     let filtered = [...orders];
@@ -110,6 +120,29 @@ const OrdersPage = () => {
     setShowSuccessModal(false);
     setSelectedOrderForPayment(null);
     setPaymentId(null);
+  };
+
+  // Collect payment handlers
+  const handleCollectPaymentClick = async (order) => {
+    try {
+      // Fetch the order with detailed payment info
+      const res = await axios.get(`/api/orders/pending-payments`);
+      const orderWithPayments = res.data.orders.find(o => o.id === order.id);
+      if (orderWithPayments) {
+        setSelectedOrderForCollection(orderWithPayments);
+        setShowCollectPaymentModal(true);
+      }
+    } catch (err) {
+      console.error("Failed to fetch payment details:", err);
+      alert("❌ Failed to load payment details");
+    }
+  };
+
+  const handleCollectPaymentSuccess = () => {
+    setShowCollectPaymentModal(false);
+    setSelectedOrderForCollection(null);
+    fetchOrders();
+    alert("✅ Payment collected successfully!");
   };
 
   const viewOrderDetails = (order) => {
@@ -218,6 +251,11 @@ const OrdersPage = () => {
       },
       SERVED: { bg: "bg-blue-100", text: "text-blue-800", icon: CheckCircle },
       PAID: { bg: "bg-green-100", text: "text-green-800", icon: DollarSign },
+      PARTIALLY_PAID: {
+        bg: "bg-indigo-100",
+        text: "text-indigo-800",
+        icon: Clock,
+      },
       CANCELLED: { bg: "bg-red-100", text: "text-red-800", icon: XCircle },
     };
 
@@ -240,6 +278,7 @@ const OrdersPage = () => {
     { key: "preparing", label: "Preparing" },
     { key: "served", label: "Served" },
     { key: "paid", label: "Paid" },
+    { key: "partially_paid", label: "Pending Payments" },
     { key: "cancelled", label: "Cancelled" },
   ];
 
@@ -388,6 +427,15 @@ const OrdersPage = () => {
                       Process Payment
                     </button>
                   )}
+                  {order.status === "PARTIALLY_PAID" && (
+                    <button
+                      onClick={() => handleCollectPaymentClick(order)}
+                      className="flex-1 py-2 bg-indigo-500 hover:bg-indigo-600 text-white text-sm font-semibold rounded-lg flex items-center justify-center space-x-1"
+                    >
+                      <CreditCard className="w-4 h-4" />
+                      <span>Collect Payment</span>
+                    </button>
+                  )}
                   <button
                     onClick={() => viewOrderDetails(order)}
                     className="p-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg"
@@ -519,6 +567,14 @@ const OrdersPage = () => {
         onClose={handleSuccessClose}
         order={selectedOrderForPayment}
         paymentId={paymentId}
+      />
+
+      {/* Collect Payment Modal */}
+      <CollectPaymentModal
+        isOpen={showCollectPaymentModal}
+        onClose={() => setShowCollectPaymentModal(false)}
+        order={selectedOrderForCollection}
+        onPaymentSuccess={handleCollectPaymentSuccess}
       />
     </div>
   );

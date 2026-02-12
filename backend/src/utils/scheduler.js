@@ -1,10 +1,10 @@
-const prisma = require('../prisma');
+const { prisma } = require('../prisma');
 
 // Check and release expired reservations
 const releaseExpiredReservations = async () => {
     try {
         const now = new Date();
-        console.log(`⏰ [${now.toLocaleTimeString()}] Checking for expired reservations...`);
+
 
         // Find all reserved tables where reservation time has ended
         const expiredReservations = await prisma.table.findMany({
@@ -26,7 +26,7 @@ const releaseExpiredReservations = async () => {
         });
 
         if (expiredReservations.length === 0) {
-            console.log('   No expired reservations found.');
+
             return { released: 0, tables: [] };
         }
 
@@ -105,7 +105,7 @@ const getExpiringReservations = async (minutesAhead = 15) => {
 
 // Start the scheduler
 const startReservationScheduler = (intervalMinutes = 1) => {
-    console.log(`🕐 Starting reservation scheduler (checking every ${intervalMinutes} minute(s))...`);
+
 
     // Run immediately on start
     releaseExpiredReservations();

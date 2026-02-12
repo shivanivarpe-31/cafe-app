@@ -1,4 +1,4 @@
-const prisma = require('../prisma');
+const { prisma } = require('../prisma');
 
 // Get all menu items
 exports.getMenuItems = async (req, res, next) => {

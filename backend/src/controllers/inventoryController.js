@@ -1,4 +1,4 @@
-const prisma = require('../prisma');
+const { prisma } = require('../prisma');
 
 // Get all inventory
 exports.getInventory = async (req, res, next) => {

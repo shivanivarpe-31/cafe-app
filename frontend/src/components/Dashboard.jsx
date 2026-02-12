@@ -18,6 +18,7 @@ import {
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import Navbar from "../components/navbar";
+import { useSmartPolling } from "../hooks/useSmartPolling";
 
 const Dashboard = () => {
   const { menuItems } = useMenu();
@@ -264,19 +265,22 @@ const Dashboard = () => {
     }
   }, [playNotificationSound]);
 
-  // Auto-refresh every 1 minute
+  // Smart polling for dashboard data (only when page is visible and user is active)
+  useSmartPolling(
+    fetchDashboardData,
+    60000,  // Poll every 1 minute when user is active
+    180000, // Poll every 3 minutes when user is inactive
+    300000  // Consider user inactive after 5 minutes of no activity
+  );
+
+  // Listen for order updates from other components
   useEffect(() => {
-    fetchDashboardData();
-
-    const interval = setInterval(fetchDashboardData, 60000); // 1 minute
-
     const handleOrderUpdated = () => {
       fetchDashboardData();
     };
     window.addEventListener("order-updated", handleOrderUpdated);
 
     return () => {
-      clearInterval(interval);
       window.removeEventListener("order-updated", handleOrderUpdated);
     };
   }, [fetchDashboardData]);

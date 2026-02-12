@@ -1,4 +1,4 @@
-const prisma = require('../prisma');
+const { prisma } = require('../prisma');
 
 // Get all ingredients
 exports.getIngredients = async (req, res, next) => {

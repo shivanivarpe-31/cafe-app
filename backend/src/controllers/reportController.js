@@ -1,9 +1,9 @@
-const prisma = require('../prisma');
+const { prisma } = require('../prisma');
 
 // Get statistics (EXISTING - unchanged)
 exports.getStats = async (req, res) => {
     try {
-        console.log('📊 Fetching statistics...');
+
 
         // Get today's date range
         const today = new Date();
@@ -109,23 +109,24 @@ exports.getStats = async (req, res) => {
             take: 10
         });
 
-        // Get menu item details for top selling
-        const topSellingItems = await Promise.all(
-            topSellingData.map(async (item) => {
-                const menuItem = await prisma.menuItem.findUnique({
-                    where: { id: item.menuItemId },
-                    include: { category: true }
-                });
-                return {
-                    id: item.menuItemId,
-                    name: menuItem?.name || 'Unknown',
-                    category: menuItem?.category?.name || 'Uncategorized',
-                    price: menuItem?.price || 0,
-                    totalSold: item._sum.quantity || 0,
-                    revenue: parseFloat(item._sum.price || 0) * (item._sum.quantity || 0)
-                };
-            })
-        );
+        // Get menu item details for top selling (batched query to prevent N+1)
+        const topSellingMenuItemIds = topSellingData.map(item => item.menuItemId);
+        const menuItemsMap = await prisma.menuItem.findMany({
+            where: { id: { in: topSellingMenuItemIds } },
+            include: { category: true }
+        }).then(items => new Map(items.map(item => [item.id, item])));
+
+        const topSellingItems = topSellingData.map(item => {
+            const menuItem = menuItemsMap.get(item.menuItemId);
+            return {
+                id: item.menuItemId,
+                name: menuItem?.name || 'Unknown',
+                category: menuItem?.category?.name || 'Uncategorized',
+                price: menuItem?.price || 0,
+                totalSold: item._sum.quantity || 0,
+                revenue: parseFloat(item._sum.price || 0) * (item._sum.quantity || 0)
+            };
+        });
 
         // Sales by category (last 7 days)
         const salesByCategory = await prisma.orderItem.groupBy({
@@ -143,13 +144,16 @@ exports.getStats = async (req, res) => {
             }
         });
 
-        // Group by category
+        // Group by category (batched query to prevent N+1)
+        const categoryMenuItemIds = salesByCategory.map(item => item.menuItemId);
+        const categoryMenuItems = await prisma.menuItem.findMany({
+            where: { id: { in: categoryMenuItemIds } },
+            include: { category: true }
+        }).then(items => new Map(items.map(item => [item.id, item])));
+
         const categoryMap = {};
         for (const item of salesByCategory) {
-            const menuItem = await prisma.menuItem.findUnique({
-                where: { id: item.menuItemId },
-                include: { category: true }
-            });
+            const menuItem = categoryMenuItems.get(item.menuItemId);
             const categoryName = menuItem?.category?.name || 'Uncategorized';
             if (!categoryMap[categoryName]) {
                 categoryMap[categoryName] = { name: categoryName, value: 0, items: 0 };

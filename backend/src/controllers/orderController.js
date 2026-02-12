@@ -1,4 +1,4 @@
-const prisma = require('../prisma');
+const { prisma, Prisma } = require('../prisma');
 
 // Generate unique bill number
 const generateBillNumber = () => {
@@ -11,7 +11,8 @@ const generateBillNumber = () => {
 };
 
 // Helper function to check if enough ingredients are available
-const checkIngredientAvailability = async (tx, orderItems) => {
+// When withLock=true, uses pessimistic locking (FOR UPDATE) to prevent race conditions
+const checkIngredientAvailability = async (tx, orderItems, withLock = false) => {
     const missingIngredients = [];
 
     for (const item of orderItems) {
@@ -27,16 +28,35 @@ const checkIngredientAvailability = async (tx, orderItems) => {
         // If no recipe defined, skip ingredient check
         if (recipe.length === 0) continue;
 
+        // If locking is requested, get ingredient IDs and lock them
+        if (withLock && recipe.length > 0) {
+            const ingredientIds = recipe.map(r => r.ingredientId);
+
+            // Use raw SQL to lock ingredient rows with FOR UPDATE
+            // This prevents other transactions from reading or modifying these rows
+            await tx.$queryRaw`
+                SELECT id, currentStock
+                FROM Ingredient
+                WHERE id IN (${Prisma.join(ingredientIds)})
+                FOR UPDATE
+            `;
+        }
+
         // Check each ingredient in the recipe
         for (const recipeItem of recipe) {
             const requiredQty = recipeItem.quantity * item.quantity;
 
-            if (recipeItem.ingredient.currentStock < requiredQty) {
+            // Re-fetch ingredient with current lock to get latest stock value
+            const currentIngredient = withLock
+                ? await tx.ingredient.findUnique({ where: { id: recipeItem.ingredientId } })
+                : recipeItem.ingredient;
+
+            if (currentIngredient.currentStock < requiredQty) {
                 missingIngredients.push({
                     menuItem: recipeItem.menuItem.name,
                     ingredient: recipeItem.ingredient.name,
                     required: requiredQty,
-                    available: recipeItem.ingredient.currentStock,
+                    available: currentIngredient.currentStock,
                     unit: recipeItem.ingredient.unit
                 });
             }
@@ -173,25 +193,8 @@ exports.createOrder = async (req, res, next) => {
                 }
             }
 
-            // Deduct ingredients
-            await deductIngredients(tx, orderItems, newOrder.id);
-
-            // Deduct simple inventory (backward compatible)
-            for (const item of orderItems) {
-                const inv = await tx.inventory.findUnique({
-                    where: { menuItemId: item.menuItemId }
-                });
-
-                if (inv && inv.quantity > 0) {
-                    await tx.inventory.update({
-                        where: { menuItemId: item.menuItemId },
-                        data: {
-                            quantity: { decrement: item.quantity },
-                            lowStock: (inv.quantity - item.quantity) < 10
-                        }
-                    });
-                }
-            }
+            // NOTE: Ingredients will be deducted when order status changes to PREPARING
+            // This prevents stock loss if order creation fails or order is cancelled before cooking starts
 
             // Update table status
             await tx.table.update({
@@ -371,38 +374,105 @@ exports.updateOrderStatus = async (req, res) => {
             updateData.paidAt = new Date();
         }
 
-        // If order is being CANCELLED, refund ingredients
-        if (status === 'CANCELLED' && existingOrder.status !== 'CANCELLED') {
+        // If order is changing to PREPARING, deduct ingredients (kitchen starts cooking)
+        if (status === 'PREPARING' && existingOrder.status !== 'PREPARING') {
             await prisma.$transaction(async (tx) => {
-                // Refund ingredients
+                // Check ingredient availability with pessimistic locking (FOR UPDATE)
+                // This prevents race conditions where two orders deduct the same inventory simultaneously
+                const missingIngredients = await checkIngredientAvailability(tx, existingOrder.items, true);
+
+                if (missingIngredients.length > 0) {
+                    const errorMsg = missingIngredients.map(m =>
+                        `${m.menuItem}: Need ${m.required.toFixed(1)}${m.unit} of ${m.ingredient}, only ${m.available.toFixed(1)} available`
+                    ).join('; ');
+
+                    throw new Error(`Insufficient ingredients: ${errorMsg}`);
+                }
+
+                // Deduct ingredients
+                await deductIngredients(tx, existingOrder.items, orderId);
+
+                // Deduct simple inventory (backward compatible) with row-level locking
+                const menuItemIds = existingOrder.items.map(item => item.menuItemId);
+
+                // Lock inventory rows to prevent concurrent deductions
+                if (menuItemIds.length > 0) {
+                    await tx.$queryRaw`
+                        SELECT id, quantity
+                        FROM Inventory
+                        WHERE menuItemId IN (${Prisma.join(menuItemIds)})
+                        FOR UPDATE
+                    `;
+                }
+
                 for (const item of existingOrder.items) {
-                    const recipe = await tx.menuItemIngredient.findMany({
-                        where: { menuItemId: item.menuItemId },
-                        include: { ingredient: true }
+                    const inv = await tx.inventory.findUnique({
+                        where: { menuItemId: item.menuItemId }
                     });
 
-                    for (const recipeItem of recipe) {
-                        const refundQty = recipeItem.quantity * item.quantity;
-
-                        await tx.ingredient.update({
-                            where: { id: recipeItem.ingredientId },
+                    if (inv && inv.quantity > 0) {
+                        await tx.inventory.update({
+                            where: { menuItemId: item.menuItemId },
                             data: {
-                                currentStock: { increment: refundQty }
-                            }
-                        });
-
-                        await tx.ingredientStockLog.create({
-                            data: {
-                                ingredientId: recipeItem.ingredientId,
-                                changeType: 'ADJUSTMENT',
-                                quantity: refundQty,
-                                orderId: orderId,
-                                notes: `Refunded - Order #${orderId} cancelled`
+                                quantity: { decrement: item.quantity },
+                                lowStock: (inv.quantity - item.quantity) < 10
                             }
                         });
                     }
                 }
             });
+        }
+
+        // If order is being CANCELLED, refund ingredients (only if they were already deducted)
+        if (status === 'CANCELLED' && existingOrder.status !== 'CANCELLED') {
+            // Only refund if order was already PREPARING, SERVED, or PAID (ingredients already deducted)
+            if (['PREPARING', 'SERVED', 'PAID'].includes(existingOrder.status)) {
+                await prisma.$transaction(async (tx) => {
+                    // Refund ingredients
+                    for (const item of existingOrder.items) {
+                        const recipe = await tx.menuItemIngredient.findMany({
+                            where: { menuItemId: item.menuItemId },
+                            include: { ingredient: true }
+                        });
+
+                        for (const recipeItem of recipe) {
+                            const refundQty = recipeItem.quantity * item.quantity;
+
+                            await tx.ingredient.update({
+                                where: { id: recipeItem.ingredientId },
+                                data: {
+                                    currentStock: { increment: refundQty }
+                                }
+                            });
+
+                            await tx.ingredientStockLog.create({
+                                data: {
+                                    ingredientId: recipeItem.ingredientId,
+                                    changeType: 'ADJUSTMENT',
+                                    quantity: refundQty,
+                                    orderId: orderId,
+                                    notes: `Refunded - Order #${orderId} cancelled from ${existingOrder.status} status`
+                                }
+                            });
+                        }
+
+                        // Refund simple inventory too
+                        const inv = await tx.inventory.findUnique({
+                            where: { menuItemId: item.menuItemId }
+                        });
+
+                        if (inv) {
+                            await tx.inventory.update({
+                                where: { menuItemId: item.menuItemId },
+                                data: {
+                                    quantity: { increment: item.quantity },
+                                    lowStock: (inv.quantity + item.quantity) < 10
+                                }
+                            });
+                        }
+                    }
+                });
+            }
         }
 
         // Update the order
@@ -499,6 +569,167 @@ exports.updateTableStatus = async (req, res, next) => {
 
         res.json(table);
     } catch (error) {
+        next(error);
+    }
+};
+
+// Create Pay Later order
+exports.createPayLaterOrder = async (req, res, next) => {
+    try {
+        const { orderId, customerName, customerPhone, customerAddress } = req.body;
+
+        // Validation
+        if (!orderId || !customerName || !customerPhone) {
+            return res.status(400).json({
+                error: 'Order ID, customer name, and phone are required'
+            });
+        }
+
+        const order = await prisma.order.findUnique({
+            where: { id: parseInt(orderId, 10) }
+        });
+
+        if (!order) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        if (order.status === 'PAID' || order.status === 'PARTIALLY_PAID') {
+            return res.status(400).json({ error: 'Order already has payments' });
+        }
+
+        await prisma.$transaction(async (tx) => {
+            // Create or update DeliveryInfo with customer details
+            await tx.deliveryInfo.upsert({
+                where: { orderId: order.id },
+                create: {
+                    orderId: order.id,
+                    customerName,
+                    customerPhone,
+                    deliveryAddress: customerAddress || '',
+                    deliveryStatus: 'DELIVERED',
+                    deliveryPlatform: 'DIRECT'
+                },
+                update: {
+                    customerName,
+                    customerPhone,
+                    deliveryAddress: customerAddress || ''
+                }
+            });
+
+            // Create Pay Later payment record
+            await tx.payment.create({
+                data: {
+                    orderId: order.id,
+                    amount: 0,
+                    currency: 'INR',
+                    paymentMode: 'PAY_LATER',
+                    status: 'PENDING',
+                    notes: JSON.stringify({
+                        customerName,
+                        customerPhone,
+                        customerAddress: customerAddress || '',
+                        totalDue: order.total
+                    })
+                }
+            });
+
+            // Update order
+            await tx.order.update({
+                where: { id: order.id },
+                data: {
+                    status: 'PARTIALLY_PAID',
+                    paymentMode: 'PAY_LATER'
+                }
+            });
+
+            // Update table status if order has a table
+            if (order.tableId) {
+                const activeOrdersOnTable = await tx.order.count({
+                    where: {
+                        tableId: order.tableId,
+                        status: {
+                            in: ['PENDING', 'PREPARING', 'SERVED']
+                        }
+                    }
+                });
+
+                if (activeOrdersOnTable === 0) {
+                    await tx.table.update({
+                        where: { id: order.tableId },
+                        data: {
+                            status: 'AVAILABLE',
+                            currentBill: 0,
+                            orderTime: null,
+                            customerName: null,
+                            customerPhone: null,
+                            reservedFrom: null,
+                            reservedUntil: null,
+                            updatedAt: new Date()
+                        }
+                    });
+                }
+            }
+        });
+
+        res.json({
+            success: true,
+            message: 'Pay Later order created successfully'
+        });
+
+    } catch (error) {
+        console.error('Create Pay Later order error:', error);
+        next(error);
+    }
+};
+
+// Get pending payments
+exports.getPendingPayments = async (req, res, next) => {
+    try {
+        const orders = await prisma.order.findMany({
+            where: {
+                OR: [
+                    { status: 'PARTIALLY_PAID' },
+                    { paymentMode: 'PAY_LATER' }
+                ]
+            },
+            include: {
+                items: {
+                    include: {
+                        menuItem: true,
+                        modifications: true
+                    }
+                },
+                table: true,
+                deliveryInfo: true,
+                payments: {
+                    orderBy: { createdAt: 'desc' }
+                }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        // Calculate remaining balance for each order
+        const ordersWithBalance = orders.map(order => {
+            const totalPaid = order.payments
+                .filter(p => p.status === 'SUCCESS')
+                .reduce((sum, p) => sum + parseFloat(p.amount), 0);
+
+            const remaining = parseFloat(order.total) - totalPaid;
+
+            return {
+                ...order,
+                totalPaid,
+                remainingBalance: remaining
+            };
+        });
+
+        res.json({
+            success: true,
+            orders: ordersWithBalance
+        });
+
+    } catch (error) {
+        console.error('Get pending payments error:', error);
         next(error);
     }
 };

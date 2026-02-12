@@ -1,6 +1,6 @@
 const Razorpay = require('razorpay');
 const crypto = require('crypto');
-const prisma = require('../prisma');
+const { prisma } = require('../prisma');
 
 // Initialize Razorpay instance
 const razorpay = new Razorpay({
@@ -32,6 +32,29 @@ exports.createPaymentOrder = async (req, res, next) => {
 
         if (order.status === 'PAID') {
             return res.status(400).json({ error: 'Order already paid' });
+        }
+
+        // Validate payment amount matches order total (with small tolerance for rounding)
+        const orderTotal = parseFloat(order.total);
+        const paymentAmount = parseFloat(amount);
+        const tolerance = 0.01; // Allow 1 paisa difference for rounding
+
+        if (Math.abs(paymentAmount - orderTotal) > tolerance) {
+            return res.status(400).json({
+                error: 'Payment amount does not match order total',
+                details: {
+                    orderTotal: orderTotal.toFixed(2),
+                    paymentAmount: paymentAmount.toFixed(2),
+                    difference: Math.abs(paymentAmount - orderTotal).toFixed(2)
+                }
+            });
+        }
+
+        // Validate amount is positive
+        if (paymentAmount <= 0) {
+            return res.status(400).json({
+                error: 'Payment amount must be greater than zero'
+            });
         }
 
         // Create Razorpay order
@@ -124,67 +147,72 @@ exports.verifyPayment = async (req, res, next) => {
             });
         }
 
-        // Update payment record with success
-        await prisma.payment.update({
-            where: { razorpayOrderId: razorpay_order_id },
-            data: {
-                status: 'SUCCESS',
-                razorpayPaymentId: razorpay_payment_id,
-                razorpaySignature: razorpay_signature
-            }
-        });
-
-        // Update order status to PAID
-        const order = await prisma.order.update({
-            where: { id: parseInt(orderId, 10) },
-            data: {
-                status: 'PAID',
-                paymentMode: 'RAZORPAY',
-                paidAt: new Date()
-            },
-            include: {
-                table: true,
-                deliveryInfo: true
-            }
-        });
-
-        // If dine-in order, update table status
-        if (order.tableId) {
-            const activeOrdersOnTable = await prisma.order.count({
-                where: {
-                    tableId: order.tableId,
-                    status: { in: ['PENDING', 'PREPARING', 'SERVED'] }
+        // Use transaction to ensure all updates succeed or fail together
+        const result = await prisma.$transaction(async (tx) => {
+            // Update payment record with success
+            await tx.payment.update({
+                where: { razorpayOrderId: razorpay_order_id },
+                data: {
+                    status: 'SUCCESS',
+                    razorpayPaymentId: razorpay_payment_id,
+                    razorpaySignature: razorpay_signature
                 }
             });
 
-            if (activeOrdersOnTable === 0) {
-                await prisma.table.update({
-                    where: { id: order.tableId },
-                    data: {
-                        status: 'AVAILABLE',
-                        currentBill: 0,
-                        orderTime: null,
-                        customerName: null,
-                        customerPhone: null,
-                        reservedFrom: null,
-                        reservedUntil: null
+            // Update order status to PAID
+            const order = await tx.order.update({
+                where: { id: parseInt(orderId, 10) },
+                data: {
+                    status: 'PAID',
+                    paymentMode: 'RAZORPAY',
+                    paidAt: new Date()
+                },
+                include: {
+                    table: true,
+                    deliveryInfo: true
+                }
+            });
+
+            // If dine-in order, update table status
+            if (order.tableId) {
+                const activeOrdersOnTable = await tx.order.count({
+                    where: {
+                        tableId: order.tableId,
+                        status: { in: ['PENDING', 'PREPARING', 'SERVED'] }
                     }
                 });
-            }
-        }
 
-        // If delivery order, update delivery status
-        if (order.deliveryInfo) {
-            await prisma.deliveryInfo.update({
-                where: { orderId: order.id },
-                data: { deliveryStatus: 'DELIVERED' }
-            });
-        }
+                if (activeOrdersOnTable === 0) {
+                    await tx.table.update({
+                        where: { id: order.tableId },
+                        data: {
+                            status: 'AVAILABLE',
+                            currentBill: 0,
+                            orderTime: null,
+                            customerName: null,
+                            customerPhone: null,
+                            reservedFrom: null,
+                            reservedUntil: null
+                        }
+                    });
+                }
+            }
+
+            // If delivery order, update delivery status
+            if (order.deliveryInfo) {
+                await tx.deliveryInfo.update({
+                    where: { orderId: order.id },
+                    data: { deliveryStatus: 'DELIVERED' }
+                });
+            }
+
+            return order;
+        });
 
         res.json({
             success: true,
             message: 'Payment verified successfully',
-            order,
+            order: result,
             paymentId: razorpay_payment_id
         });
 
@@ -211,26 +239,31 @@ exports.recordManualPayment = async (req, res, next) => {
             return res.status(404).json({ error: 'Order not found' });
         }
 
-        // Create payment record
-        const payment = await prisma.payment.create({
-            data: {
-                orderId: parseInt(orderId, 10),
-                amount: parseFloat(amount),
-                currency: 'INR',
-                paymentMode: paymentMode.toUpperCase(),
-                status: 'SUCCESS',
-                notes: notes || null
-            }
-        });
+        // Use transaction to ensure payment record and order update succeed together
+        const payment = await prisma.$transaction(async (tx) => {
+            // Create payment record
+            const paymentRecord = await tx.payment.create({
+                data: {
+                    orderId: parseInt(orderId, 10),
+                    amount: parseFloat(amount),
+                    currency: 'INR',
+                    paymentMode: paymentMode.toUpperCase(),
+                    status: 'SUCCESS',
+                    notes: notes || null
+                }
+            });
 
-        // Update order
-        await prisma.order.update({
-            where: { id: parseInt(orderId, 10) },
-            data: {
-                status: 'PAID',
-                paymentMode: paymentMode.toUpperCase(),
-                paidAt: new Date()
-            }
+            // Update order
+            await tx.order.update({
+                where: { id: parseInt(orderId, 10) },
+                data: {
+                    status: 'PAID',
+                    paymentMode: paymentMode.toUpperCase(),
+                    paidAt: new Date()
+                }
+            });
+
+            return paymentRecord;
         });
 
         res.json({
@@ -396,7 +429,7 @@ exports.refundPayment = async (req, res, next) => {
             return res.status(404).json({ error: 'Payment record not found' });
         }
 
-        // Process refund with Razorpay
+        // Process refund with Razorpay (external API - cannot be rolled back)
         const refund = await razorpay.payments.refund(paymentId, {
             amount: amount ? Math.round(amount * 100) : undefined,
             speed: 'normal',
@@ -406,31 +439,34 @@ exports.refundPayment = async (req, res, next) => {
             }
         });
 
-        // Update payment record
-        await prisma.payment.update({
-            where: { id: paymentRecord.id },
-            data: {
-                status: 'REFUNDED',
-                refundId: refund.id,
-                refundAmount: parseFloat(refund.amount) / 100,
-                refundedAt: new Date(),
-                notes: JSON.stringify({
-                    ...JSON.parse(paymentRecord.notes || '{}'),
-                    refundReason: reason
-                })
-            }
-        });
-
-        // Update order status
-        if (orderId) {
-            await prisma.order.update({
-                where: { id: parseInt(orderId, 10) },
+        // Update database records in transaction (if Razorpay succeeds, all DB updates must succeed together)
+        await prisma.$transaction(async (tx) => {
+            // Update payment record
+            await tx.payment.update({
+                where: { id: paymentRecord.id },
                 data: {
-                    status: 'CANCELLED',
-                    paymentMode: 'REFUNDED'
+                    status: 'REFUNDED',
+                    refundId: refund.id,
+                    refundAmount: parseFloat(refund.amount) / 100,
+                    refundedAt: new Date(),
+                    notes: JSON.stringify({
+                        ...JSON.parse(paymentRecord.notes || '{}'),
+                        refundReason: reason
+                    })
                 }
             });
-        }
+
+            // Update order status
+            if (orderId) {
+                await tx.order.update({
+                    where: { id: parseInt(orderId, 10) },
+                    data: {
+                        status: 'CANCELLED',
+                        paymentMode: 'REFUNDED'
+                    }
+                });
+            }
+        });
 
         res.json({
             success: true,
@@ -440,6 +476,178 @@ exports.refundPayment = async (req, res, next) => {
 
     } catch (error) {
         console.error('Refund payment error:', error);
+        next(error);
+    }
+};
+
+// Process split payment (multiple payment methods for one order)
+exports.processSplitPayment = async (req, res, next) => {
+    try {
+        const { orderId, payments } = req.body;
+
+        // Validation: Check required fields
+        if (!orderId || !payments || !Array.isArray(payments)) {
+            return res.status(400).json({ error: 'Order ID and payments array are required' });
+        }
+
+        // Validation: Exactly 2 payment methods
+        if (payments.length !== 2) {
+            return res.status(400).json({ error: 'Split payment requires exactly 2 payment methods' });
+        }
+
+        // Validation: Both payment methods have required fields
+        for (const payment of payments) {
+            if (!payment.paymentMode || !payment.amount) {
+                return res.status(400).json({ error: 'Each payment must have paymentMode and amount' });
+            }
+        }
+
+        // Validation: Only manual payment methods allowed (CASH, CARD, UPI)
+        const allowedMethods = ['CASH', 'CARD', 'UPI'];
+        for (const payment of payments) {
+            if (!allowedMethods.includes(payment.paymentMode.toUpperCase())) {
+                return res.status(400).json({
+                    error: 'Only Cash, Card, and UPI are allowed in split payments'
+                });
+            }
+        }
+
+        // Validation: No duplicate methods
+        if (payments[0].paymentMode.toUpperCase() === payments[1].paymentMode.toUpperCase()) {
+            return res.status(400).json({ error: 'Cannot use the same payment method twice' });
+        }
+
+        // Validation: All amounts must be positive
+        for (const payment of payments) {
+            if (parseFloat(payment.amount) <= 0) {
+                return res.status(400).json({ error: 'All payment amounts must be greater than zero' });
+            }
+        }
+
+        // Get order and verify it exists
+        const order = await prisma.order.findUnique({
+            where: { id: parseInt(orderId, 10) },
+            include: {
+                table: true,
+                deliveryInfo: true
+            }
+        });
+
+        if (!order) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        // Validation: Order not already paid or cancelled
+        if (order.status === 'PAID') {
+            return res.status(400).json({ error: 'Order already paid' });
+        }
+
+        if (order.status === 'CANCELLED') {
+            return res.status(400).json({ error: 'Cannot pay for cancelled order' });
+        }
+
+        // Validation: Sum of amounts must equal order total (with tolerance for rounding)
+        const totalAmount = payments.reduce((sum, p) => sum + parseFloat(p.amount), 0);
+        const orderTotal = parseFloat(order.total);
+        if (Math.abs(totalAmount - orderTotal) >= 0.01) {
+            return res.status(400).json({
+                error: `Total split amount (₹${totalAmount.toFixed(2)}) does not match order total (₹${orderTotal.toFixed(2)})`
+            });
+        }
+
+        // Process split payment using transaction (atomic operation)
+        const result = await prisma.$transaction(async (tx) => {
+            // Create first payment record
+            const payment1 = await tx.payment.create({
+                data: {
+                    orderId: order.id,
+                    amount: parseFloat(payments[0].amount),
+                    currency: 'INR',
+                    paymentMode: payments[0].paymentMode.toUpperCase(),
+                    status: 'SUCCESS',
+                    notes: JSON.stringify({
+                        isSplitPayment: true,
+                        splitIndex: 1,
+                        totalSplits: 2
+                    })
+                }
+            });
+
+            // Create second payment record
+            const payment2 = await tx.payment.create({
+                data: {
+                    orderId: order.id,
+                    amount: parseFloat(payments[1].amount),
+                    currency: 'INR',
+                    paymentMode: payments[1].paymentMode.toUpperCase(),
+                    status: 'SUCCESS',
+                    notes: JSON.stringify({
+                        isSplitPayment: true,
+                        splitIndex: 2,
+                        totalSplits: 2
+                    })
+                }
+            });
+
+            // Update order status to PAID
+            const updatedOrder = await tx.order.update({
+                where: { id: order.id },
+                data: {
+                    status: 'PAID',
+                    paymentMode: `${payments[0].paymentMode.toUpperCase()}+${payments[1].paymentMode.toUpperCase()}`,
+                    paidAt: new Date()
+                }
+            });
+
+            // If dine-in order, update table status
+            if (order.tableId) {
+                const activeOrdersOnTable = await tx.order.count({
+                    where: {
+                        tableId: order.tableId,
+                        status: { in: ['PENDING', 'PREPARING', 'SERVED'] }
+                    }
+                });
+
+                // If no more active orders on the table, mark it as available
+                if (activeOrdersOnTable === 0) {
+                    await tx.table.update({
+                        where: { id: order.tableId },
+                        data: {
+                            status: 'AVAILABLE',
+                            currentBill: 0,
+                            orderTime: null,
+                            customerName: null,
+                            customerPhone: null,
+                            reservedFrom: null,
+                            reservedUntil: null
+                        }
+                    });
+                }
+            }
+
+            // If delivery order, update delivery status
+            if (order.deliveryInfo) {
+                await tx.deliveryInfo.update({
+                    where: { orderId: order.id },
+                    data: { deliveryStatus: 'DELIVERED' }
+                });
+            }
+
+            return { payment1, payment2, updatedOrder };
+        }, {
+            maxWait: 5000,
+            timeout: 10000
+        });
+
+        res.json({
+            success: true,
+            message: 'Split payment processed successfully',
+            payments: [result.payment1, result.payment2],
+            order: result.updatedOrder
+        });
+
+    } catch (error) {
+        console.error('Process split payment error:', error);
         next(error);
     }
 };
@@ -514,6 +722,95 @@ exports.getPaymentStats = async (req, res, next) => {
 
     } catch (error) {
         console.error('Get payment stats error:', error);
+        next(error);
+    }
+};
+
+// Record partial payment
+exports.recordPartialPayment = async (req, res, next) => {
+    try {
+        const { orderId, amount, paymentMode } = req.body;
+
+        if (!orderId || !amount || !paymentMode) {
+            return res.status(400).json({
+                error: 'Order ID, amount, and payment mode are required'
+            });
+        }
+
+        const order = await prisma.order.findUnique({
+            where: { id: parseInt(orderId, 10) },
+            include: {
+                payments: {
+                    where: { status: 'SUCCESS' }
+                }
+            }
+        });
+
+        if (!order) {
+            return res.status(404).json({ error: 'Order not found' });
+        }
+
+        // Calculate remaining balance
+        const totalPaid = order.payments.reduce(
+            (sum, p) => sum + parseFloat(p.amount),
+            0
+        );
+        const remaining = parseFloat(order.total) - totalPaid;
+
+        if (parseFloat(amount) > remaining + 0.01) {
+            return res.status(400).json({
+                error: `Payment amount (₹${amount}) exceeds remaining balance (₹${remaining.toFixed(2)})`
+            });
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            // Create payment record
+            const payment = await tx.payment.create({
+                data: {
+                    orderId: order.id,
+                    amount: parseFloat(amount),
+                    currency: 'INR',
+                    paymentMode: paymentMode.toUpperCase(),
+                    status: 'SUCCESS',
+                    notes: JSON.stringify({
+                        isPartialPayment: true,
+                        previousBalance: remaining,
+                        paymentNumber: order.payments.length + 1
+                    })
+                }
+            });
+
+            // Check if fully paid
+            const newTotalPaid = totalPaid + parseFloat(amount);
+            const fullyPaid = Math.abs(newTotalPaid - parseFloat(order.total)) < 0.01;
+
+            // Update order status
+            const updatedOrder = await tx.order.update({
+                where: { id: order.id },
+                data: {
+                    status: fullyPaid ? 'PAID' : 'PARTIALLY_PAID',
+                    paymentMode: fullyPaid
+                        ? paymentMode.toUpperCase()
+                        : `PAY_LATER+${paymentMode.toUpperCase()}`,
+                    paidAt: fullyPaid ? new Date() : null
+                }
+            });
+
+            return { payment, updatedOrder, fullyPaid };
+        });
+
+        res.json({
+            success: true,
+            message: result.fullyPaid
+                ? 'Payment completed - order fully paid'
+                : 'Partial payment recorded',
+            payment: result.payment,
+            order: result.updatedOrder,
+            fullyPaid: result.fullyPaid
+        });
+
+    } catch (error) {
+        console.error('Record partial payment error:', error);
         next(error);
     }
 };
