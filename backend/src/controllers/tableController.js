@@ -273,3 +273,198 @@ exports.updateTableStatus = async (req, res, next) => {
         next(error);
     }
 };
+
+// Merge tables
+exports.mergeTables = async (req, res, next) => {
+    try {
+        const { tableIds } = req.body;
+
+        if (!tableIds || !Array.isArray(tableIds) || tableIds.length < 2) {
+            return res.status(400).json({
+                error: 'At least 2 table IDs are required to merge'
+            });
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            // Fetch all tables to be merged
+            const tables = await tx.table.findMany({
+                where: { id: { in: tableIds.map(id => parseInt(id, 10)) } },
+                include: {
+                    orders: {
+                        where: {
+                            status: { in: ['PENDING', 'PREPARING', 'SERVED'] }
+                        }
+                    }
+                }
+            });
+
+            if (tables.length !== tableIds.length) {
+                throw new Error('One or more tables not found');
+            }
+
+            // Check if any table is already merged
+            const alreadyMerged = tables.find(t => t.isMerged);
+            if (alreadyMerged) {
+                throw new Error(`Table ${alreadyMerged.number} is already part of a merged group`);
+            }
+
+            // Generate unique merge group ID
+            const mergedGroupId = `MERGE_${Date.now()}_${tableIds.join('_')}`;
+
+            // Calculate total capacity and current bill
+            const totalCapacity = tables.reduce((sum, t) => sum + t.capacity, 0);
+            const totalBill = tables.reduce((sum, t) => sum + (t.currentBill || 0), 0);
+
+            // Determine primary table (first table in the list)
+            const primaryTable = tables.find(t => t.id === parseInt(tableIds[0], 10));
+
+            // Merge all tables to the primary table's orders
+            // Move all orders from other tables to the primary table
+            for (const table of tables) {
+                if (table.id !== primaryTable.id && table.orders.length > 0) {
+                    for (const order of table.orders) {
+                        await tx.order.update({
+                            where: { id: order.id },
+                            data: { tableId: primaryTable.id }
+                        });
+                    }
+                }
+            }
+
+            // Update all tables with merge info
+            const updatedTables = await Promise.all(
+                tables.map(table =>
+                    tx.table.update({
+                        where: { id: table.id },
+                        data: {
+                            mergedGroupId,
+                            isMerged: true,
+                            status: 'OCCUPIED',
+                            // Primary table gets the combined bill
+                            currentBill: table.id === primaryTable.id ? totalBill : table.currentBill,
+                            updatedAt: new Date()
+                        }
+                    })
+                )
+            );
+
+            return {
+                tables: updatedTables,
+                mergedGroupId,
+                primaryTableId: primaryTable.id,
+                totalCapacity,
+                totalBill
+            };
+        });
+
+        res.json({
+            success: true,
+            message: `Tables ${tableIds.join(', ')} merged successfully`,
+            ...result
+        });
+
+    } catch (error) {
+        console.error('Merge tables error:', error);
+        if (error.message) {
+            return res.status(400).json({ error: error.message });
+        }
+        next(error);
+    }
+};
+
+// Split (unmerge) tables
+exports.splitTables = async (req, res, next) => {
+    try {
+        const { mergedGroupId } = req.body;
+
+        if (!mergedGroupId) {
+            return res.status(400).json({
+                error: 'Merged group ID is required'
+            });
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            // Find all tables in the merged group
+            const tables = await tx.table.findMany({
+                where: { mergedGroupId },
+                include: {
+                    orders: {
+                        where: {
+                            status: { in: ['PENDING', 'PREPARING', 'SERVED'] }
+                        }
+                    }
+                }
+            });
+
+            if (tables.length === 0) {
+                throw new Error('No tables found with this merge group ID');
+            }
+
+            // Check if any orders are active
+            const hasActiveOrders = tables.some(t => t.orders.length > 0);
+
+            // Split all tables from the merged group
+            const updatedTables = await Promise.all(
+                tables.map(table =>
+                    tx.table.update({
+                        where: { id: table.id },
+                        data: {
+                            mergedGroupId: null,
+                            isMerged: false,
+                            status: hasActiveOrders && table.orders.length > 0 ? 'OCCUPIED' : 'AVAILABLE',
+                            currentBill: table.orders.length > 0 ? table.currentBill : 0,
+                            updatedAt: new Date()
+                        }
+                    })
+                )
+            );
+
+            return { tables: updatedTables };
+        });
+
+        res.json({
+            success: true,
+            message: 'Tables split successfully',
+            ...result
+        });
+
+    } catch (error) {
+        console.error('Split tables error:', error);
+        if (error.message) {
+            return res.status(400).json({ error: error.message });
+        }
+        next(error);
+    }
+};
+
+// Get merged table groups
+exports.getMergedGroups = async (req, res, next) => {
+    try {
+        const mergedTables = await prisma.table.findMany({
+            where: { isMerged: true },
+            orderBy: { mergedGroupId: 'asc' }
+        });
+
+        // Group tables by mergedGroupId
+        const groups = {};
+        for (const table of mergedTables) {
+            if (!groups[table.mergedGroupId]) {
+                groups[table.mergedGroupId] = [];
+            }
+            groups[table.mergedGroupId].push(table);
+        }
+
+        res.json({
+            groups: Object.entries(groups).map(([groupId, tables]) => ({
+                groupId,
+                tables,
+                totalCapacity: tables.reduce((sum, t) => sum + t.capacity, 0),
+                tableNumbers: tables.map(t => t.number).sort((a, b) => a - b)
+            }))
+        });
+
+    } catch (error) {
+        console.error('Get merged groups error:', error);
+        next(error);
+    }
+};

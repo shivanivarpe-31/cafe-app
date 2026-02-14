@@ -1,26 +1,44 @@
 const { prisma } = require('../prisma');
 
-// Get statistics (EXISTING - unchanged)
+// Helper to parse date string as local time
+const parseLocalDate = (dateStr) => {
+    const [year, month, day] = dateStr.split('-').map(Number);
+    return new Date(year, month - 1, day);
+};
+
+// Get statistics - accepts optional 'date' query param for historical data
 exports.getStats = async (req, res) => {
     try {
+        const { date } = req.query;
+        console.log('📊 getStats called with date param:', date);
 
+        // If a specific date is provided, use that as the "target" date
+        // Otherwise default to today
+        let targetDate;
+        if (date) {
+            targetDate = parseLocalDate(date);
+            console.log('📊 Fetching stats for specific date:', date, '-> parsed as:', targetDate);
+        } else {
+            targetDate = new Date();
+            console.log('📊 Fetching stats for today (no date param):', targetDate);
+        }
+        targetDate.setHours(0, 0, 0, 0);
 
-        // Get today's date range
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
+        const targetNextDay = new Date(targetDate);
+        targetNextDay.setDate(targetNextDay.getDate() + 1);
 
-        // Get yesterday's date range
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
+        console.log('📅 Date range: from', targetDate.toISOString(), 'to', targetNextDay.toISOString());
 
-        // Today's orders
-        const todayOrders = await prisma.order.findMany({
+        // Get the day before target for comparison
+        const previousDay = new Date(targetDate);
+        previousDay.setDate(previousDay.getDate() - 1);
+
+        // Target day's orders
+        const targetOrders = await prisma.order.findMany({
             where: {
                 createdAt: {
-                    gte: today,
-                    lt: tomorrow
+                    gte: targetDate,
+                    lt: targetNextDay
                 }
             },
             include: {
@@ -28,12 +46,12 @@ exports.getStats = async (req, res) => {
             }
         });
 
-        // Yesterday's orders for comparison
-        const yesterdayOrders = await prisma.order.findMany({
+        // Previous day's orders for comparison
+        const previousOrders = await prisma.order.findMany({
             where: {
                 createdAt: {
-                    gte: yesterday,
-                    lt: today
+                    gte: previousDay,
+                    lt: targetDate
                 }
             },
             include: {
@@ -41,25 +59,25 @@ exports.getStats = async (req, res) => {
             }
         });
 
-        // Calculate today's sales (only PAID orders)
-        const todayPaidOrders = todayOrders.filter(o => o.status === 'PAID');
-        const todaySales = todayPaidOrders.reduce((sum, order) => {
+        // Calculate target day's sales (only PAID orders)
+        const targetPaidOrders = targetOrders.filter(o => o.status === 'PAID');
+        const targetSales = targetPaidOrders.reduce((sum, order) => {
             return sum + parseFloat(order.total);
         }, 0);
 
-        // Calculate yesterday's sales for comparison
-        const yesterdayPaidOrders = yesterdayOrders.filter(o => o.status === 'PAID');
-        const yesterdaySales = yesterdayPaidOrders.reduce((sum, order) => {
+        // Calculate previous day's sales for comparison
+        const previousPaidOrders = previousOrders.filter(o => o.status === 'PAID');
+        const previousSales = previousPaidOrders.reduce((sum, order) => {
             return sum + parseFloat(order.total);
         }, 0);
 
-        // Calculate total items sold today
-        const totalItemsSold = todayPaidOrders.reduce((sum, order) => {
+        // Calculate total items sold on target day
+        const totalItemsSold = targetPaidOrders.reduce((sum, order) => {
             return sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
         }, 0);
 
-        // Calculate yesterday's items sold
-        const yesterdayItemsSold = yesterdayPaidOrders.reduce((sum, order) => {
+        // Calculate previous day's items sold
+        const previousItemsSold = previousPaidOrders.reduce((sum, order) => {
             return sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
         }, 0);
 
@@ -181,23 +199,24 @@ exports.getStats = async (req, res) => {
         });
 
         // Average order value
-        const avgOrderValue = todayPaidOrders.length > 0
-            ? todaySales / todayPaidOrders.length
+        const avgOrderValue = targetPaidOrders.length > 0
+            ? targetSales / targetPaidOrders.length
             : 0;
-        const yesterdayAvgOrderValue = yesterdayPaidOrders.length > 0
-            ? yesterdaySales / yesterdayPaidOrders.length
+        const previousAvgOrderValue = previousPaidOrders.length > 0
+            ? previousSales / previousPaidOrders.length
             : 0;
 
-        // Payment method breakdown (today)
+        // Payment method breakdown (target day) - check both uppercase and lowercase for compatibility
         const paymentBreakdown = {
-            cash: todayPaidOrders.filter(o => o.paymentMode === 'cash').length,
-            card: todayPaidOrders.filter(o => o.paymentMode === 'card').length,
-            upi: todayPaidOrders.filter(o => o.paymentMode === 'upi').length
+            cash: targetPaidOrders.filter(o => o.paymentMode?.toUpperCase() === 'CASH').length,
+            card: targetPaidOrders.filter(o => o.paymentMode?.toUpperCase() === 'CARD').length,
+            upi: targetPaidOrders.filter(o => o.paymentMode?.toUpperCase() === 'UPI').length
         };
+        console.log('💰 Target day paid orders:', targetPaidOrders.length, 'Payment modes:', targetPaidOrders.map(o => o.paymentMode));
 
-        // Peak hours analysis (today)
+        // Peak hours analysis (target day)
         const hourlyOrders = {};
-        todayOrders.forEach(order => {
+        targetOrders.forEach(order => {
             const hour = new Date(order.createdAt).getHours();
             hourlyOrders[hour] = (hourlyOrders[hour] || 0) + 1;
         });
@@ -212,31 +231,32 @@ exports.getStats = async (req, res) => {
             ? Math.round((occupiedTables / allTables.length) * 100)
             : 0;
 
+        console.log('✅ Stats result: targetSales=', targetSales, 'targetOrders=', targetOrders.length, 'previousSales=', previousSales);
 
         res.json({
-            // Today's metrics
-            todaySales,
-            todayOrders: todayOrders.length,
-            todayPaidOrders: todayPaidOrders.length,
+            // Target day's metrics (labeled as "today" for frontend compatibility)
+            todaySales: targetSales,
+            todayOrders: targetOrders.length,
+            todayPaidOrders: targetPaidOrders.length,
             totalItemsSold,
             avgOrderValue: Math.round(avgOrderValue * 100) / 100,
 
-            // Yesterday's metrics for comparison
-            yesterdaySales,
-            yesterdayOrders: yesterdayOrders.length,
-            yesterdayPaidOrders: yesterdayPaidOrders.length,
-            yesterdayItemsSold,
-            yesterdayAvgOrderValue: Math.round(yesterdayAvgOrderValue * 100) / 100,
+            // Previous day's metrics for comparison (labeled as "yesterday" for frontend compatibility)
+            yesterdaySales: previousSales,
+            yesterdayOrders: previousOrders.length,
+            yesterdayPaidOrders: previousPaidOrders.length,
+            yesterdayItemsSold: previousItemsSold,
+            yesterdayAvgOrderValue: Math.round(previousAvgOrderValue * 100) / 100,
 
-            // Growth percentages
-            salesGrowth: yesterdaySales > 0
-                ? Math.round(((todaySales - yesterdaySales) / yesterdaySales) * 1000) / 10
+            // Growth percentages (target vs previous day)
+            salesGrowth: previousSales > 0
+                ? Math.round(((targetSales - previousSales) / previousSales) * 1000) / 10
                 : 0,
-            ordersGrowth: yesterdayOrders.length > 0
-                ? Math.round(((todayOrders.length - yesterdayOrders.length) / yesterdayOrders.length) * 1000) / 10
+            ordersGrowth: previousOrders.length > 0
+                ? Math.round(((targetOrders.length - previousOrders.length) / previousOrders.length) * 1000) / 10
                 : 0,
-            itemsGrowth: yesterdayItemsSold > 0
-                ? Math.round(((totalItemsSold - yesterdayItemsSold) / yesterdayItemsSold) * 1000) / 10
+            itemsGrowth: previousItemsSold > 0
+                ? Math.round(((totalItemsSold - previousItemsSold) / previousItemsSold) * 1000) / 10
                 : 0,
 
             // Stock info
@@ -291,15 +311,32 @@ exports.getSalesTrend = async (req, res) => {
         const { from, to } = req.query;
         console.log('📈 Fetching sales trend from', from, 'to', to);
 
+        // Parse dates properly to avoid timezone issues
+        // When parsing YYYY-MM-DD, we need to handle it as local time
+        const parseLocalDate = (dateStr) => {
+            const [year, month, day] = dateStr.split('-').map(Number);
+            return new Date(year, month - 1, day);
+        };
+
         // Default to last 7 days if no dates provided
-        const endDate = to ? new Date(to) : new Date();
+        let endDate, startDate;
+
+        if (to) {
+            endDate = parseLocalDate(to);
+        } else {
+            endDate = new Date();
+        }
         endDate.setHours(23, 59, 59, 999);
 
-        const startDate = from ? new Date(from) : new Date();
-        if (!from) {
+        if (from) {
+            startDate = parseLocalDate(from);
+        } else {
+            startDate = new Date();
             startDate.setDate(startDate.getDate() - 7);
         }
         startDate.setHours(0, 0, 0, 0);
+
+        console.log('📅 Parsed dates - Start:', startDate.toISOString(), 'End:', endDate.toISOString());
 
         // Get orders in date range (all statuses for trend, but calculate sales from PAID)
         const orders = await prisma.order.findMany({
@@ -314,13 +351,20 @@ exports.getSalesTrend = async (req, res) => {
             }
         });
 
+        console.log('📦 Found', orders.length, 'orders in date range');
+
         // Group by day
         const salesByDay = {};
 
-        // Initialize all days in range
+        // Initialize all days in range (use local date formatting)
         const currentDate = new Date(startDate);
         while (currentDate <= endDate) {
-            const dateStr = currentDate.toISOString().split('T')[0];
+            // Format as YYYY-MM-DD in local time
+            const year = currentDate.getFullYear();
+            const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+            const day = String(currentDate.getDate()).padStart(2, '0');
+            const dateStr = `${year}-${month}-${day}`;
+
             salesByDay[dateStr] = {
                 sales: 0,
                 orders: 0,
@@ -329,9 +373,17 @@ exports.getSalesTrend = async (req, res) => {
             currentDate.setDate(currentDate.getDate() + 1);
         }
 
+        console.log('📆 Initialized days:', Object.keys(salesByDay));
+
         // Fill in actual data
         orders.forEach(order => {
-            const date = order.createdAt.toISOString().split('T')[0];
+            // Format order date in local time
+            const orderDate = new Date(order.createdAt);
+            const year = orderDate.getFullYear();
+            const month = String(orderDate.getMonth() + 1).padStart(2, '0');
+            const day = String(orderDate.getDate()).padStart(2, '0');
+            const date = `${year}-${month}-${day}`;
+
             if (salesByDay[date]) {
                 salesByDay[date].orders += 1;
                 if (order.status === 'PAID') {
@@ -343,16 +395,21 @@ exports.getSalesTrend = async (req, res) => {
 
         // Convert to array format
         const salesTrend = Object.entries(salesByDay)
-            .map(([date, data]) => ({
-                name: new Date(date).toLocaleDateString('en-US', { weekday: 'short' }),
-                date,
-                fullDate: new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                sales: Math.round(data.sales * 100) / 100,
-                orders: data.orders,
-                items: data.items
-            }))
+            .map(([date, data]) => {
+                const [year, month, day] = date.split('-').map(Number);
+                const dateObj = new Date(year, month - 1, day);
+                return {
+                    name: dateObj.toLocaleDateString('en-US', { weekday: 'short' }),
+                    date,
+                    fullDate: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                    sales: Math.round(data.sales * 100) / 100,
+                    orders: data.orders,
+                    items: data.items
+                };
+            })
             .sort((a, b) => new Date(a.date) - new Date(b.date));
 
+        console.log('✅ Sales trend result:', salesTrend);
         res.json(salesTrend);
 
     } catch (error) {

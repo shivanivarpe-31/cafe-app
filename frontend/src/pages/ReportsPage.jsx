@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import axios from "axios";
 import jsPDF from "jspdf";
 import {
@@ -17,6 +23,8 @@ import {
   Smartphone,
   Clock,
   Users,
+  FileText,
+  Printer,
 } from "lucide-react";
 import {
   BarChart,
@@ -32,8 +40,52 @@ import {
   Pie,
   Cell,
 } from "recharts";
+import { Link } from "react-router-dom";
 import Navbar from "../components/navbar";
-import { showError } from "../utils/toast";
+import { showError, showSuccess } from "../utils/toast";
+
+// Date range presets
+const DATE_PRESETS = [
+  { label: "Today", days: 0 },
+  { label: "Yesterday", days: 1 },
+  { label: "Last 7 Days", days: 7 },
+  { label: "Last 30 Days", days: 30 },
+  { label: "This Month", days: "month" },
+];
+
+// Helper to calculate date range from preset
+const getDateRangeFromPreset = (preset) => {
+  const today = new Date();
+  const to = today.toISOString().split("T")[0];
+
+  if (preset.days === 0) {
+    return { from: to, to };
+  }
+
+  if (preset.days === 1) {
+    const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const yesterdayStr = yesterday.toISOString().split("T")[0];
+    return { from: yesterdayStr, to: yesterdayStr };
+  }
+
+  if (preset.days === "month") {
+    const firstOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    return { from: firstOfMonth.toISOString().split("T")[0], to };
+  }
+
+  const from = new Date(Date.now() - preset.days * 24 * 60 * 60 * 1000);
+  return { from: from.toISOString().split("T")[0], to };
+};
+
+// Colors for pie chart
+const COLORS = [
+  "#ef4444",
+  "#3b82f6",
+  "#22c55e",
+  "#f59e0b",
+  "#8b5cf6",
+  "#ec4899",
+];
 
 const ReportsPage = () => {
   const [stats, setStats] = useState({
@@ -55,20 +107,36 @@ const ReportsPage = () => {
   });
 
   const [dateRange, setDateRange] = useState({
-    from: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)
-      .toISOString()
-      .split("T")[0],
+    from: new Date().toISOString().split("T")[0],
     to: new Date().toISOString().split("T")[0],
   });
 
-  const [loading, setLoading] = useState(false);
+  const [activePreset, setActivePreset] = useState("Today");
+  const [loading, setLoading] = useState(true);
   const [salesTrend, setSalesTrend] = useState([]);
   const [exporting, setExporting] = useState(false);
+  const [exportingCSV, setExportingCSV] = useState(false);
+  const [error, setError] = useState(null);
+
+  // Abort controller ref for cleanup
+  const abortControllerRef = useRef(null);
+  const dateChangeTimeoutRef = useRef(null);
+
+  // Dynamic labels based on active preset
+  const dayLabel = useMemo(() => {
+    if (activePreset === "Yesterday") return "Yesterday's";
+    return "Today's";
+  }, [activePreset]);
+
+  const comparisonLabel = useMemo(() => {
+    if (activePreset === "Yesterday") return "vs day before";
+    return "vs yesterday";
+  }, [activePreset]);
 
   // Memoize api instance
   const api = useMemo(() => {
     const instance = axios.create({
-      baseURL: "http://localhost:5001/api",
+      baseURL: "/api",
     });
 
     instance.interceptors.request.use(
@@ -87,40 +155,278 @@ const ReportsPage = () => {
     return instance;
   }, []);
 
-  const fetchStats = useCallback(async () => {
+  const fetchStats = useCallback(
+    async (signal, targetDate) => {
+      try {
+        const url = targetDate
+          ? `/reports/stats?date=${targetDate}`
+          : "/reports/stats";
+        console.log("🔍 Fetching stats from URL:", url);
+        const res = await api.get(url, { signal });
+        console.log(
+          "✅ Stats received, todaySales:",
+          res.data.todaySales,
+          "todayOrders:",
+          res.data.todayOrders,
+        );
+        setStats(res.data);
+        setError(null);
+      } catch (err) {
+        if (err.name === "AbortError" || err.name === "CanceledError") return;
+        console.error("Failed to fetch stats:", err);
+        setError("Failed to load stats. Click refresh to retry.");
+      }
+    },
+    [api],
+  );
+
+  const fetchSalesTrend = useCallback(
+    async (signal, fromDate, toDate) => {
+      if (!fromDate || !toDate) {
+        console.warn("fetchSalesTrend called without dates!");
+        return;
+      }
+      try {
+        console.log("📈 Fetching sales trend:", fromDate, "to", toDate);
+        const res = await api.get(
+          `/reports/sales?from=${fromDate}&to=${toDate}`,
+          {
+            signal,
+          },
+        );
+        if (res.data && Array.isArray(res.data)) {
+          console.log("✅ Sales trend data received:", res.data.length, "days");
+          setSalesTrend(res.data);
+        }
+      } catch (err) {
+        if (err.name === "AbortError" || err.name === "CanceledError") return;
+        console.error("Failed to fetch sales trend:", err);
+      }
+    },
+    [api],
+  );
+
+  const fetchAllData = useCallback(async () => {
+    // Cancel any pending requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
+    // Determine dates based on active preset
+    const today = new Date();
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const graphFrom = sevenDaysAgo.toISOString().split("T")[0];
+    const graphTo = today.toISOString().split("T")[0];
+
+    setLoading(true);
     try {
-      setLoading(true);
-      const res = await api.get("/reports/stats");
-      setStats(res.data);
-    } catch (err) {
-      console.error("Failed to fetch stats:", err);
+      await Promise.all([
+        fetchStats(signal, null),
+        fetchSalesTrend(signal, graphFrom, graphTo),
+      ]);
     } finally {
       setLoading(false);
     }
-  }, [api]);
-
-  const fetchSalesTrend = useCallback(async () => {
-    try {
-      const res = await api.get(
-        `/reports/sales?from=${dateRange.from}&to=${dateRange.to}`,
-      );
-      if (res.data && Array.isArray(res.data)) {
-        setSalesTrend(res.data);
-      }
-    } catch (err) {
-      console.error("Failed to fetch sales trend:", err);
-    }
-  }, [api, dateRange.from, dateRange.to]);
-
-  useEffect(() => {
-    fetchStats();
-    fetchSalesTrend();
   }, [fetchStats, fetchSalesTrend]);
 
+  // Initial load only - run once on mount
+  useEffect(() => {
+    // Initial fetch: stats for today, trend for last 7 days
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+    const signal = abortControllerRef.current.signal;
+
+    const today = new Date();
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const graphFrom = sevenDaysAgo.toISOString().split("T")[0];
+    const graphTo = today.toISOString().split("T")[0];
+
+    setLoading(true);
+    Promise.all([
+      fetchStats(signal, null),
+      fetchSalesTrend(signal, graphFrom, graphTo),
+    ]).finally(() => setLoading(false));
+
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      if (dateChangeTimeoutRef.current) {
+        clearTimeout(dateChangeTimeoutRef.current);
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Debounced date range change handler
+  const handleDateRangeChange = useCallback(
+    (newRange) => {
+      setDateRange(newRange);
+      setActivePreset(null); // Clear preset when manually changing dates
+
+      // Debounce the API call
+      if (dateChangeTimeoutRef.current) {
+        clearTimeout(dateChangeTimeoutRef.current);
+      }
+      dateChangeTimeoutRef.current = setTimeout(() => {
+        fetchSalesTrend(
+          abortControllerRef.current?.signal,
+          newRange.from,
+          newRange.to,
+        );
+      }, 500);
+    },
+    [fetchSalesTrend],
+  );
+
+  // Handle preset selection
+  const handlePresetSelect = useCallback(
+    (preset) => {
+      const range = getDateRangeFromPreset(preset);
+      setDateRange(range);
+      setActivePreset(preset.label);
+
+      // Create new abort controller for these requests
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+      abortControllerRef.current = new AbortController();
+      const signal = abortControllerRef.current.signal;
+
+      // For "Today" and "Yesterday", show last 7 days in graphs for better visualization
+      const today = new Date();
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const graphFrom = sevenDaysAgo.toISOString().split("T")[0];
+      const graphTo = today.toISOString().split("T")[0];
+
+      console.log("🔄 Preset selected:", preset.label);
+
+      if (preset.label === "Today") {
+        // Stats for today (default), graphs for last 7 days
+        console.log(
+          "📊 Fetching Today stats (no date param), graphs for last 7 days",
+        );
+        fetchStats(signal, null);
+        fetchSalesTrend(signal, graphFrom, graphTo);
+      } else if (preset.label === "Yesterday") {
+        // Stats for yesterday, graphs for last 7 days
+        const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
+        const yesterdayStr = yesterday.toISOString().split("T")[0];
+        console.log(
+          "📊 Fetching Yesterday stats for date:",
+          yesterdayStr,
+          ", graphs for last 7 days",
+        );
+        fetchStats(signal, yesterdayStr);
+        fetchSalesTrend(signal, graphFrom, graphTo);
+      } else {
+        // For other presets, use the actual date range for both
+        console.log(
+          "📊 Fetching stats (default), graphs for range:",
+          range.from,
+          "to",
+          range.to,
+        );
+        fetchStats(signal, null);
+        fetchSalesTrend(signal, range.from, range.to);
+      }
+    },
+    [fetchStats, fetchSalesTrend],
+  );
+
+  // Note: We no longer need the effect to refetch on date change since we call fetchSalesTrend directly
+
   const handleRefresh = () => {
-    fetchStats();
-    fetchSalesTrend();
+    fetchAllData();
   };
+
+  // CSV Export
+  const downloadCSVReport = useCallback(async () => {
+    try {
+      setExportingCSV(true);
+
+      // Prepare CSV data
+      const csvRows = [];
+
+      // Header section
+      csvRows.push(["Business Report"]);
+      csvRows.push([`Generated: ${new Date().toLocaleString()}`]);
+      csvRows.push([`Date Range: ${dateRange.from} to ${dateRange.to}`]);
+      csvRows.push([]);
+
+      // Key Metrics
+      csvRows.push(["KEY METRICS"]);
+      csvRows.push(["Metric", "Value"]);
+      csvRows.push(["Today's Sales", `₹${stats.todaySales || 0}`]);
+      csvRows.push(["Orders Today", stats.todayOrders || 0]);
+      csvRows.push(["Items Sold", stats.totalItemsSold || 0]);
+      csvRows.push(["Avg Order Value", `₹${stats.avgOrderValue || 0}`]);
+      csvRows.push(["Low Stock Items", stats.lowStockCount || 0]);
+      csvRows.push([]);
+
+      // Top Selling Items
+      csvRows.push(["TOP SELLING ITEMS"]);
+      csvRows.push(["Rank", "Item Name", "Units Sold", "Revenue"]);
+      (stats.topSellingItems || []).forEach((item, idx) => {
+        csvRows.push([
+          idx + 1,
+          item.name,
+          item.totalSold,
+          `₹${Math.round(item.revenue || 0)}`,
+        ]);
+      });
+      csvRows.push([]);
+
+      // Sales Trend
+      csvRows.push(["SALES TREND"]);
+      csvRows.push(["Date", "Sales", "Orders"]);
+      salesTrend.forEach((day) => {
+        csvRows.push([day.fullDate, `₹${day.sales}`, day.orders]);
+      });
+      csvRows.push([]);
+
+      // Low Stock Items
+      csvRows.push(["LOW STOCK ALERTS"]);
+      csvRows.push(["Item Name", "Quantity", "Category"]);
+      (stats.lowStockItems || []).forEach((item) => {
+        csvRows.push([item.name, item.quantity, item.category || "N/A"]);
+      });
+
+      // Convert to CSV string
+      const csvContent = csvRows
+        .map((row) =>
+          row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
+        )
+        .join("\n");
+
+      // Download
+      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `sales-report-${Date.now()}.csv`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      showSuccess("CSV report downloaded successfully!");
+    } catch (e) {
+      console.error(e);
+      showError("Error generating CSV report");
+    } finally {
+      setExportingCSV(false);
+    }
+  }, [stats, salesTrend, dateRange]);
+
+  // Print function
+  const handlePrint = useCallback(() => {
+    window.print();
+  }, []);
 
   const downloadPDFReport = () => {
     try {
@@ -355,6 +661,7 @@ const ReportsPage = () => {
       );
 
       pdf.save("sales-report-" + Date.now() + ".pdf");
+      showSuccess("PDF report downloaded successfully!");
     } catch (e) {
       console.error(e);
       showError("Error generating PDF");
@@ -363,106 +670,227 @@ const ReportsPage = () => {
     }
   };
 
-  // Colors for pie chart
-  const COLORS = [
-    "#ef4444",
-    "#3b82f6",
-    "#22c55e",
-    "#f59e0b",
-    "#8b5cf6",
-    "#ec4899",
-  ];
+  // Memoize total sales for period
+  const totalSalesForPeriod = useMemo(() => {
+    return salesTrend.reduce((sum, day) => sum + (day.sales || 0), 0);
+  }, [salesTrend]);
 
-  // // Payment breakdown data for pie chart
-  // const paymentData = useMemo(
-  //   () =>
-  //     [
-  //       { name: "Cash", value: stats.paymentBreakdown?.cash || 0 },
-  //       { name: "Card", value: stats.paymentBreakdown?.card || 0 },
-  //       { name: "UPI", value: stats.paymentBreakdown?.upi || 0 },
-  //     ].filter((item) => item.value > 0),
-  //   [stats.paymentBreakdown],
-  // );
+  const totalOrdersForPeriod = useMemo(() => {
+    return salesTrend.reduce((sum, day) => sum + (day.orders || 0), 0);
+  }, [salesTrend]);
+
+  // Skeleton loader component
+  const SkeletonCard = () => (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 animate-pulse">
+      <div className="flex items-center justify-between">
+        <div className="flex-1">
+          <div className="h-4 w-24 bg-gray-200 rounded mb-2"></div>
+          <div className="h-8 w-32 bg-gray-200 rounded mb-2"></div>
+          <div className="h-3 w-20 bg-gray-200 rounded"></div>
+        </div>
+        <div className="w-14 h-14 bg-gray-200 rounded-2xl"></div>
+      </div>
+    </div>
+  );
+
+  const SkeletonChart = () => (
+    <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 animate-pulse">
+      <div className="h-6 w-40 bg-gray-200 rounded mb-6"></div>
+      <div className="h-64 bg-gray-100 rounded-xl"></div>
+    </div>
+  );
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gray-50 print:bg-white">
       <Navbar />
 
       {/* Page Header */}
-      <div className="bg-white border-b border-gray-200 py-6">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900 flex items-center">
-                <BarChart3 className="w-7 h-7 mr-3 text-red-500" />
-                Business Reports & Analytics
-              </h1>
-              <p className="text-sm text-gray-500 mt-1">
-                Real-time performance tracking and insights
-              </p>
+      <div className="bg-white border-b border-gray-200 py-4 sm:py-6 print:hidden">
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 md:px-6">
+          <div className="flex flex-col gap-3 sm:gap-4">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+              <div className="flex-1 min-w-0">
+                <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center">
+                  <BarChart3 className="w-5 h-5 sm:w-6 sm:h-6 md:w-7 md:h-7 mr-2 sm:mr-3 text-red-500 flex-shrink-0" />
+                  <span className="truncate">Business Reports & Analytics</span>
+                </h1>
+                <p className="text-xs sm:text-sm text-gray-500 mt-1">
+                  Real-time performance tracking and insights
+                </p>
+              </div>
             </div>
 
-            {/* Date Range Filter */}
-            <div className="flex items-center space-x-3">
-              <div className="flex items-center space-x-2 bg-gray-50 rounded-xl px-3 py-2 border border-gray-200">
-                <Calendar className="w-4 h-4 text-gray-500" />
+            {/* Date Range Presets */}
+            <div className="flex flex-wrap gap-2">
+              {DATE_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  onClick={() => handlePresetSelect(preset)}
+                  className={`px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium transition-all ${
+                    activePreset === preset.label
+                      ? "bg-red-500 text-white shadow-md"
+                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  }`}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Date Range Filter & Actions */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
+              <div className="flex items-center space-x-2 bg-gray-50 rounded-xl px-3 py-2 border border-gray-200 flex-1 sm:flex-initial">
+                <Calendar className="w-4 h-4 text-gray-500 flex-shrink-0" />
                 <input
                   type="date"
                   value={dateRange.from}
                   onChange={(e) =>
-                    setDateRange({ ...dateRange, from: e.target.value })
+                    handleDateRangeChange({
+                      ...dateRange,
+                      from: e.target.value,
+                    })
                   }
-                  className="text-sm bg-transparent focus:outline-none text-gray-700"
+                  className="text-xs sm:text-sm bg-transparent focus:outline-none text-gray-700 w-full sm:w-auto"
                 />
-                <span className="text-gray-400">to</span>
+                <span className="text-gray-400 text-xs sm:text-sm">to</span>
                 <input
                   type="date"
                   value={dateRange.to}
                   onChange={(e) =>
-                    setDateRange({ ...dateRange, to: e.target.value })
+                    handleDateRangeChange({ ...dateRange, to: e.target.value })
                   }
-                  className="text-sm bg-transparent focus:outline-none text-gray-700"
+                  className="text-xs sm:text-sm bg-transparent focus:outline-none text-gray-700 w-full sm:w-auto"
                 />
               </div>
-              <button
-                onClick={handleRefresh}
-                disabled={loading}
-                className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium transition-all flex items-center space-x-2 disabled:opacity-50"
-              >
-                <RefreshCw
-                  className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
-                />
-                <span>Refresh</span>
-              </button>
-              <button
-                onClick={downloadPDFReport}
-                disabled={exporting}
-                className="px-5 py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-xl font-semibold shadow-md hover:shadow-lg transition-all flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                <Download className="w-4 h-4" />
-                <span>{exporting ? "Exporting..." : "Export PDF"}</span>
-              </button>
+              <div className="flex gap-2 flex-wrap">
+                <button
+                  onClick={handleRefresh}
+                  disabled={loading}
+                  className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 sm:py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium transition-all flex items-center justify-center space-x-1.5 sm:space-x-2 disabled:opacity-50 text-xs sm:text-sm"
+                >
+                  <RefreshCw
+                    className={`w-3.5 h-3.5 sm:w-4 sm:h-4 ${
+                      loading ? "animate-spin" : ""
+                    }`}
+                  />
+                  <span className="hidden sm:inline">Refresh</span>
+                </button>
+                <button
+                  onClick={handlePrint}
+                  className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 sm:py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-medium transition-all flex items-center justify-center space-x-1.5 sm:space-x-2 text-xs sm:text-sm"
+                  title="Print Report"
+                >
+                  <Printer className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span className="hidden sm:inline">Print</span>
+                </button>
+                <button
+                  onClick={downloadCSVReport}
+                  disabled={exportingCSV}
+                  className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 sm:py-2.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-xl font-medium transition-all flex items-center justify-center space-x-1.5 sm:space-x-2 disabled:opacity-50 text-xs sm:text-sm"
+                  title="Export as CSV"
+                >
+                  <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span>{exportingCSV ? "..." : "CSV"}</span>
+                </button>
+                <button
+                  onClick={downloadPDFReport}
+                  disabled={exporting}
+                  className="flex-1 sm:flex-initial px-3 sm:px-5 py-2 sm:py-2.5 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white rounded-xl font-semibold shadow-md hover:shadow-lg transition-all flex items-center justify-center space-x-1.5 sm:space-x-2 disabled:opacity-50 disabled:cursor-not-allowed text-xs sm:text-sm"
+                >
+                  <Download className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
+                  <span>{exporting ? "..." : "PDF"}</span>
+                </button>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
-        {loading ? (
-          <div className="text-center py-12">
-            <div className="w-16 h-16 border-4 border-red-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-            <p className="text-gray-500">Loading analytics...</p>
+        {/* Error State */}
+        {error && (
+          <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <AlertTriangle className="w-5 h-5 text-red-500" />
+              <span className="text-red-700">{error}</span>
+            </div>
+            <button
+              onClick={handleRefresh}
+              className="px-4 py-2 bg-red-500 text-white rounded-lg text-sm font-medium hover:bg-red-600 transition-colors"
+            >
+              Retry
+            </button>
           </div>
+        )}
+
+        {loading ? (
+          <>
+            {/* Skeleton Loading */}
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+              {[1, 2, 3, 4].map((i) => (
+                <SkeletonCard key={i} />
+              ))}
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              {[1, 2, 3].map((i) => (
+                <SkeletonCard key={i} />
+              ))}
+            </div>
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+              <SkeletonChart />
+              <SkeletonChart />
+            </div>
+          </>
         ) : (
           <>
+            {/* Period Summary (for date range) - hidden for Today/Yesterday */}
+            {salesTrend.length > 1 &&
+              activePreset !== "Today" &&
+              activePreset !== "Yesterday" && (
+                <div className="bg-gradient-to-r from-red-500 to-orange-500 rounded-2xl p-6 text-white">
+                  <h3 className="text-sm font-medium text-white/80 mb-2">
+                    Period Summary ({dateRange.from} to {dateRange.to})
+                  </h3>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                    <div>
+                      <p className="text-3xl font-bold">
+                        ₹{totalSalesForPeriod.toLocaleString()}
+                      </p>
+                      <p className="text-sm text-white/80">Total Sales</p>
+                    </div>
+                    <div>
+                      <p className="text-3xl font-bold">
+                        {totalOrdersForPeriod}
+                      </p>
+                      <p className="text-sm text-white/80">Total Orders</p>
+                    </div>
+                    <div>
+                      <p className="text-3xl font-bold">
+                        ₹
+                        {totalOrdersForPeriod > 0
+                          ? Math.round(
+                              totalSalesForPeriod / totalOrdersForPeriod,
+                            )
+                          : 0}
+                      </p>
+                      <p className="text-sm text-white/80">Avg Order Value</p>
+                    </div>
+                    <div>
+                      <p className="text-3xl font-bold">{salesTrend.length}</p>
+                      <p className="text-sm text-white/80">Days</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
             {/* Key Metrics */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-              {/* Today's Sales */}
+              {/* Sales */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow">
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
                     <p className="text-sm font-medium text-gray-600 mb-1">
-                      Today's Sales
+                      {dayLabel} Sales
                     </p>
                     <p className="text-3xl font-bold text-gray-900 mb-1">
                       ₹{Number(stats.todaySales || 0).toLocaleString()}
@@ -483,7 +911,7 @@ const ReportsPage = () => {
                           </span>
                         </>
                       )}
-                      <span className="text-gray-500">vs yesterday</span>
+                      <span className="text-gray-500">{comparisonLabel}</span>
                     </div>
                   </div>
                   <div className="w-14 h-14 bg-red-100 rounded-2xl flex items-center justify-center">
@@ -492,12 +920,14 @@ const ReportsPage = () => {
                 </div>
               </div>
 
-              {/* Orders Today */}
+              {/* Orders */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow">
                 <div className="flex items-center justify-between">
                   <div className="flex-1">
                     <p className="text-sm font-medium text-gray-600 mb-1">
-                      Orders Today
+                      {activePreset === "Yesterday"
+                        ? "Orders (Yesterday)"
+                        : "Orders Today"}
                     </p>
                     <p className="text-3xl font-bold text-gray-900 mb-1">
                       {stats.todayOrders || 0}
@@ -518,7 +948,7 @@ const ReportsPage = () => {
                           </span>
                         </>
                       )}
-                      <span className="text-gray-500">vs yesterday</span>
+                      <span className="text-gray-500">{comparisonLabel}</span>
                     </div>
                   </div>
                   <div className="w-14 h-14 bg-blue-100 rounded-2xl flex items-center justify-center">
@@ -636,7 +1066,9 @@ const ReportsPage = () => {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-gray-600 mb-1">
-                      Items Sold Today
+                      {activePreset === "Yesterday"
+                        ? "Items Sold (Yesterday)"
+                        : "Items Sold Today"}
                     </p>
                     <p className="text-2xl font-bold text-gray-900">
                       {stats.totalItemsSold || 0}
@@ -651,7 +1083,7 @@ const ReportsPage = () => {
                           {stats.itemsGrowth}%
                         </span>
                       )}
-                      <span className="text-gray-500">vs yesterday</span>
+                      <span className="text-gray-500">{comparisonLabel}</span>
                     </div>
                   </div>
                   <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
@@ -663,7 +1095,8 @@ const ReportsPage = () => {
               {/* Payment Methods */}
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                 <p className="text-sm font-medium text-gray-600 mb-3">
-                  Payment Methods (Today)
+                  Payment Methods (
+                  {activePreset === "Yesterday" ? "Yesterday" : "Today"})
                 </p>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center space-x-4">
@@ -714,7 +1147,10 @@ const ReportsPage = () => {
                           border: "1px solid #e5e7eb",
                           borderRadius: "12px",
                         }}
-                        formatter={(value) => [`₹${value}`, "Sales"]}
+                        formatter={(value) => [
+                          `₹${value.toLocaleString()}`,
+                          "Sales",
+                        ]}
                       />
                       <Line
                         type="monotone"
@@ -800,7 +1236,11 @@ const ReportsPage = () => {
                           />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value) => `₹${Math.round(value)}`} />
+                      <Tooltip
+                        formatter={(value) =>
+                          `₹${Math.round(value).toLocaleString()}`
+                        }
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                 ) : (
@@ -814,7 +1254,8 @@ const ReportsPage = () => {
               <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
                 <h2 className="text-lg font-bold text-gray-900 mb-6 flex items-center">
                   <Clock className="w-5 h-5 mr-2 text-orange-500" />
-                  Peak Hours (Today)
+                  Peak Hours (
+                  {activePreset === "Yesterday" ? "Yesterday" : "Today"})
                 </h2>
                 {stats.peakHours && stats.peakHours.length > 0 ? (
                   <div className="space-y-4">
@@ -921,9 +1362,12 @@ const ReportsPage = () => {
                             {item.category || "Uncategorized"}
                           </p>
                         </div>
-                        <button className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg transition-colors">
+                        <Link
+                          to="/inventory"
+                          className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white text-sm font-semibold rounded-lg transition-colors"
+                        >
                           Restock
-                        </button>
+                        </Link>
                       </div>
                     ))}
                   </div>

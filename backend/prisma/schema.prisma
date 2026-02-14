@@ -18,7 +18,7 @@ enum OrderStatus {
 
 enum TableStatus {
   AVAILABLE
-  OCCUPIED  
+  OCCUPIED
   RESERVED
 }
 
@@ -55,12 +55,22 @@ enum DeliveryStatus {
   CANCELLED
 }
 
+enum UserRole {
+  ADMIN
+  MANAGER
+  CHEF
+}
+
 model User {
-  id        Int      @id @default(autoincrement())
-  email     String   @unique
+  id        Int       @id @default(autoincrement())
+  email     String    @unique
   password  String
-  role      String   @default("owner")
-  createdAt DateTime @default(now())
+  name      String?
+  role      UserRole  @default(MANAGER)
+  isActive  Boolean   @default(true)
+  createdBy Int?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime? @updatedAt
 }
 
 model Category {
@@ -71,17 +81,17 @@ model Category {
 }
 
 model MenuItem {
-  id          Int         @id @default(autoincrement())
-  name        String      
+  id          Int                  @id @default(autoincrement())
+  name        String
   description String?
-  price       Decimal     @db.Decimal(10, 2)
+  price       Decimal              @db.Decimal(10, 2)
   categoryId  Int
-  isActive    Boolean     @default(true)
-  category    Category    @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  isActive    Boolean              @default(true)
+  category    Category             @relation(fields: [categoryId], references: [id], onDelete: Cascade)
   inventory   Inventory?
   ingredients MenuItemIngredient[]
   orderItems  OrderItem[]
-  createdAt   DateTime    @default(now())
+  createdAt   DateTime             @default(now())
 }
 
 model Inventory {
@@ -94,27 +104,27 @@ model Inventory {
 }
 
 model Ingredient {
-  id            Int                  @id @default(autoincrement())
-  name          String               @unique
-  unit          IngredientUnit       @default(GRAMS)
-  currentStock  Float                @default(0)
-  minStock      Float                @default(10)  // Alert threshold
-  costPerUnit   Decimal              @db.Decimal(10, 2) @default(0)
-  supplier      String?
-  menuItems     MenuItemIngredient[]
-  stockLogs     IngredientStockLog[]
-  createdAt     DateTime             @default(now())
-  updatedAt     DateTime             @updatedAt
+  id           Int                  @id @default(autoincrement())
+  name         String               @unique
+  unit         IngredientUnit       @default(GRAMS)
+  currentStock Float                @default(0)
+  minStock     Float                @default(10) // Alert threshold
+  costPerUnit  Decimal              @default(0) @db.Decimal(10, 2)
+  supplier     String?
+  menuItems    MenuItemIngredient[]
+  stockLogs    IngredientStockLog[]
+  createdAt    DateTime             @default(now())
+  updatedAt    DateTime             @updatedAt
 }
 
 model MenuItemIngredient {
   id           Int        @id @default(autoincrement())
   menuItemId   Int
   ingredientId Int
-  quantity     Float      // Amount of ingredient needed for 1 unit of menu item
+  quantity     Float // Amount of ingredient needed for 1 unit of menu item
   menuItem     MenuItem   @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
   ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
-  
+
   @@unique([menuItemId, ingredientId])
 }
 
@@ -122,30 +132,30 @@ model IngredientStockLog {
   id           Int        @id @default(autoincrement())
   ingredientId Int
   ingredient   Ingredient @relation(fields: [ingredientId], references: [id], onDelete: Cascade)
-  changeType   String     // PURCHASE, ORDER_USAGE, WASTAGE, ADJUSTMENT
-  quantity     Float      // Positive for additions, negative for deductions
+  changeType   String // PURCHASE, ORDER_USAGE, WASTAGE, ADJUSTMENT
+  quantity     Float // Positive for additions, negative for deductions
   notes        String?
-  orderId      Int?       // Link to order if usage
+  orderId      Int? // Link to order if usage
   createdAt    DateTime   @default(now())
 }
 
 model Order {
-  id          Int         @id @default(autoincrement())
-  tableId     Int?
-  table       Table?       @relation(fields: [tableId], references: [id])
-  billNumber  String      @unique
-  subtotal    Decimal     @db.Decimal(10, 2)
-  tax         Decimal     @db.Decimal(10, 2)
-  total       Decimal     @db.Decimal(10, 2)
-  status      OrderStatus      @default(PENDING) // pending, preparing, served, paid, cancelled
-  paymentMode String?     // cash, card, upi
-  items       OrderItem[]
-  createdAt   DateTime    @default(now())
-  paidAt      DateTime?
-  updatedAt   DateTime    @updatedAt
-  orderType       OrderType        @default(DINE_IN)
-  deliveryInfo    DeliveryInfo?
-  payments            Payment[]  // Add this line
+  id           Int           @id @default(autoincrement())
+  tableId      Int?
+  table        Table?        @relation(fields: [tableId], references: [id])
+  billNumber   String        @unique
+  subtotal     Decimal       @db.Decimal(10, 2)
+  tax          Decimal       @db.Decimal(10, 2)
+  total        Decimal       @db.Decimal(10, 2)
+  status       OrderStatus   @default(PENDING) // pending, preparing, served, paid, cancelled
+  paymentMode  String? // cash, card, upi
+  items        OrderItem[]
+  createdAt    DateTime      @default(now())
+  paidAt       DateTime?
+  updatedAt    DateTime      @updatedAt
+  orderType    OrderType     @default(DINE_IN)
+  deliveryInfo DeliveryInfo?
+  payments     Payment[] // Add this line
 
   // Indexes for frequently queried fields
   @@index([status])
@@ -155,13 +165,13 @@ model Order {
 }
 
 model OrderItem {
-  id         Int      @id @default(autoincrement())
-  orderId    Int
-  order      Order    @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  menuItemId Int
-  menuItem   MenuItem @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
-  quantity   Int
-  price      Decimal  @db.Decimal(10, 2)
+  id            Int                     @id @default(autoincrement())
+  orderId       Int
+  order         Order                   @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  menuItemId    Int
+  menuItem      MenuItem                @relation(fields: [menuItemId], references: [id], onDelete: Restrict)
+  quantity      Int
+  price         Decimal                 @db.Decimal(10, 2)
   notes         String?
   modifications OrderItemModification[]
 
@@ -171,13 +181,13 @@ model OrderItem {
 }
 
 model Modification {
-  id          Int                    @id @default(autoincrement())
-  name        String                 @unique  // e.g., "Extra Cheese", "No Onion"
-  price       Decimal                @db.Decimal(10, 2) @default(0)  // Extra charge (0 for free mods)
-  isActive    Boolean                @default(true)
-  category    String?                // e.g., "Add-ons", "Remove", "Spice Level"
-  orderItems  OrderItemModification[]
-  createdAt   DateTime               @default(now())
+  id         Int                     @id @default(autoincrement())
+  name       String                  @unique // e.g., "Extra Cheese", "No Onion"
+  price      Decimal                 @default(0) @db.Decimal(10, 2) // Extra charge (0 for free mods)
+  isActive   Boolean                 @default(true)
+  category   String? // e.g., "Add-ons", "Remove", "Spice Level"
+  orderItems OrderItemModification[]
+  createdAt  DateTime                @default(now())
 }
 
 model OrderItemModification {
@@ -186,97 +196,103 @@ model OrderItemModification {
   orderItem      OrderItem    @relation(fields: [orderItemId], references: [id], onDelete: Cascade)
   modificationId Int
   modification   Modification @relation(fields: [modificationId], references: [id], onDelete: Cascade)
-  quantity       Int          @default(1)  // For things like "Double cheese" = quantity 2
-  price          Decimal      @db.Decimal(10, 2)  // Price at time of order
-  
+  quantity       Int          @default(1) // For things like "Double cheese" = quantity 2
+  price          Decimal      @db.Decimal(10, 2) // Price at time of order
+
   @@unique([orderItemId, modificationId])
 }
 
 model Table {
-  id            Int        @id @default(autoincrement())
+  id            Int         @id @default(autoincrement())
   number        Int         @unique
   name          String
   capacity      Int         @default(4)
   status        TableStatus @default(AVAILABLE)
-  currentBill   Float?     @default(0)
-  orderTime     DateTime?               // changed from String? to DateTime?
+  currentBill   Float?      @default(0)
+  orderTime     DateTime? // changed from String? to DateTime?
   customerName  String?
   customerPhone String?
-  reservedFrom  DateTime?               // NEW: reservation start
-  reservedUntil DateTime?               // changed to DateTime?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime   @updatedAt
-  orders        Order[]   @relation
+  reservedFrom  DateTime? // NEW: reservation start
+  reservedUntil DateTime? // changed to DateTime?
+
+  // Table merging fields
+  mergedGroupId String? // Identifier for merged table group
+  isMerged      Boolean @default(false) // Quick check if table is part of merged group
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  orders    Order[]  @relation
 
   // Index for finding available tables
   @@index([status])
+  @@index([mergedGroupId])
   @@map("tables")
 }
 
 model DeliveryInfo {
-  id                Int              @id @default(autoincrement())
-  orderId           Int              @unique
-  order             Order            @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  
+  id      Int   @id @default(autoincrement())
+  orderId Int   @unique
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
   // Customer info
-  customerName      String
-  customerPhone     String
-  customerEmail     String?
-  
+  customerName  String
+  customerPhone String
+  customerEmail String?
+
   // Delivery specific
-  deliveryAddress   String?          // Null for takeaway
-  deliveryPlatform  DeliveryPlatform @default(DIRECT)
-  platformOrderId   String?          // Zomato/Swiggy order ID
-  deliveryStatus    DeliveryStatus   @default(PENDING)
-  
+  deliveryAddress  String? // Null for takeaway
+  deliveryPlatform DeliveryPlatform @default(DIRECT)
+  platformOrderId  String? // Zomato/Swiggy order ID
+  deliveryStatus   DeliveryStatus   @default(PENDING)
+
   // Delivery partner info (for platform orders)
-  deliveryPartnerName   String?
-  deliveryPartnerPhone  String?
-  
+  deliveryPartnerName  String?
+  deliveryPartnerPhone String?
+
   // Timing
-  estimatedTime     DateTime?        // Estimated delivery/pickup time
-  actualTime        DateTime?        // Actual delivery/pickup time
-  
+  estimatedTime DateTime? // Estimated delivery/pickup time
+  actualTime    DateTime? // Actual delivery/pickup time
+
   // Additional charges
-  deliveryFee       Decimal          @db.Decimal(10, 2) @default(0)
-  packagingFee      Decimal          @db.Decimal(10, 2) @default(0)
-  platformFee       Decimal          @db.Decimal(10, 2) @default(0)  // Commission to Zomato/Swiggy
-  discount          Decimal          @db.Decimal(10, 2) @default(0)
-  
+  deliveryFee  Decimal @default(0) @db.Decimal(10, 2)
+  packagingFee Decimal @default(0) @db.Decimal(10, 2)
+  platformFee  Decimal @default(0) @db.Decimal(10, 2) // Commission to Zomato/Swiggy
+  discount     Decimal @default(0) @db.Decimal(10, 2)
+
   // Notes
   specialInstructions String?
-  
-  createdAt         DateTime         @default(now())
-  updatedAt         DateTime         @updatedAt
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model Payment {
-  id                  Int       @id @default(autoincrement())
-  orderId             Int
-  order               Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  id      Int   @id @default(autoincrement())
+  orderId Int
+  order   Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
 
   // Payment details
-  amount              Decimal   @db.Decimal(10, 2)
-  currency            String    @default("INR")
-  paymentMode         String    // RAZORPAY, CASH, CARD, UPI
-  status              String    @default("PENDING") // PENDING, SUCCESS, FAILED, REFUNDED
+  amount      Decimal @db.Decimal(10, 2)
+  currency    String  @default("INR")
+  paymentMode String // RAZORPAY, CASH, CARD, UPI
+  status      String  @default("PENDING") // PENDING, SUCCESS, FAILED, REFUNDED
 
   // Razorpay specific
-  razorpayOrderId     String?   @unique
-  razorpayPaymentId   String?   @unique
-  razorpaySignature   String?
+  razorpayOrderId   String? @unique
+  razorpayPaymentId String? @unique
+  razorpaySignature String?
 
   // Refund details
-  refundId            String?
-  refundAmount        Decimal?  @db.Decimal(10, 2)
-  refundedAt          DateTime?
+  refundId     String?
+  refundAmount Decimal?  @db.Decimal(10, 2)
+  refundedAt   DateTime?
 
   // Metadata
-  notes               String?   @db.Text
-  errorMessage        String?
+  notes        String? @db.Text
+  errorMessage String?
 
-  createdAt           DateTime  @default(now())
-  updatedAt           DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   // Indexes for payment queries
   @@index([status])
@@ -284,4 +300,3 @@ model Payment {
   @@index([paymentMode])
   @@index([createdAt])
 }
-

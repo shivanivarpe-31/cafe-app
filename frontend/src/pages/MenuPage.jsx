@@ -1,33 +1,54 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import { useMenu } from "../context/MenuContext";
 import {
   Plus,
-  Edit,
-  Trash2,
   Search,
-  Filter,
   X,
   Save,
   Package,
-  AlertCircle,
-  ToggleLeft,
-  ToggleRight,
   RefreshCw,
-  PackagePlus,
+  LayoutGrid,
+  List,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  SlidersHorizontal,
+  Keyboard,
 } from "lucide-react";
 import Navbar from "../components/navbar";
 import axios from "axios";
 import { showSuccess, showError, showWarning } from "../utils/toast";
+import { DEFAULT_FORM_STATE } from "../utils/menuConstants";
+import {
+  validateMenuForm,
+  filterMenuItems,
+  separateActiveItems,
+  getAllCategories,
+} from "../utils/menuHelpers";
+import { useDebounce } from "../hooks/useDebounce";
+import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
+import {
+  MenuItemCard,
+  MenuItemRow,
+  MenuTableSkeleton,
+} from "../components/menu/MenuItemCard";
+import StockUpdateModal from "../components/menu/StockUpdateModal";
+import { EmptyState } from "../components/EmptyState";
 
 const MenuPage = () => {
-  const {
-    menuItems,
-    loading,
-    fetchMenu,
-    addItem,
-    updateItem,
-    deleteItem,
-  } = useMenu();
+  // Get lightweight menu functions from context
+  const { addItem, updateItem, deleteItem } = useMenu();
+
+  // MenuPage needs detailed menu data with inventory & ingredients
+  const [menuItems, setMenuItems] = useState([]);
+  const [loading, setLoading] = useState(true);
+
   const [showForm, setShowForm] = useState(false);
   const [editMode, setEditMode] = useState(false);
   const [editingId, setEditingId] = useState(null);
@@ -36,13 +57,69 @@ const MenuPage = () => {
   const [categories, setCategories] = useState([]);
   const [showStockModal, setShowStockModal] = useState(false);
   const [stockItem, setStockItem] = useState(null);
-  const [newStockQty, setNewStockQty] = useState(0);
-  const [form, setForm] = useState({
-    name: "",
-    description: "",
-    price: "",
-    categoryId: 1,
+  const [form, setForm] = useState(DEFAULT_FORM_STATE);
+
+  // View & Sort options
+  const [viewMode, setViewMode] = useState(() => {
+    return localStorage.getItem("menuViewMode") || "table";
   });
+  const [sortConfig, setSortConfig] = useState({
+    key: "name",
+    direction: "asc",
+  });
+  const [showFilters, setShowFilters] = useState(false);
+  const [showKeyboardHelp, setShowKeyboardHelp] = useState(false);
+
+  // Loading states for async operations
+  const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState(null);
+  const [toggling, setToggling] = useState(null);
+  const [updatingStock, setUpdatingStock] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
+
+  // Refs for cleanup and focus management
+  const abortControllerRef = useRef(null);
+  const searchInputRef = useRef(null);
+
+  // Debounced search term for performance
+  const debouncedSearchTerm = useDebounce(searchTerm, 300);
+
+  // Fetch detailed menu for management (includes inventory & ingredients)
+  const fetchMenu = useCallback(async (isRefresh = false) => {
+    // Create new abort controller for this request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
+    if (isRefresh) {
+      setRefreshing(true);
+    } else {
+      setLoading(true);
+    }
+
+    try {
+      const res = await axios.get("/api/menu/items/detailed", {
+        signal: abortControllerRef.current.signal,
+      });
+      setMenuItems(res.data || []);
+    } catch (err) {
+      if (err.name === "AbortError" || err.name === "CanceledError") {
+        return;
+      }
+      console.error("Failed to fetch menu:", err);
+      showError("Failed to load menu items");
+      setMenuItems([]);
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, []);
+
+  // Initial load of detailed menu
+  useEffect(() => {
+    fetchMenu();
+  }, [fetchMenu]);
 
   // Wrapped fetchCategories
   const fetchCategories = useCallback(async () => {
@@ -65,8 +142,26 @@ const MenuPage = () => {
     fetchCategories();
   }, [fetchCategories]);
 
+  // Cleanup abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
+
   const handleSubmit = async (e) => {
     e.preventDefault();
+
+    // Validate form
+    const validation = validateMenuForm(form);
+    if (!validation.valid) {
+      showWarning(validation.errors.join(", "));
+      return;
+    }
+
+    setSubmitting(true);
     try {
       const itemData = {
         name: form.name,
@@ -84,8 +179,11 @@ const MenuPage = () => {
       }
 
       cancelForm();
+      fetchMenu(); // Refresh detailed menu data
     } catch (err) {
       showError("Failed: " + (err.response?.data?.error || err.message));
+    } finally {
+      setSubmitting(false);
     }
   };
 
@@ -102,119 +200,311 @@ const MenuPage = () => {
   };
 
   const handleDelete = async (id, name) => {
-    if (!window.confirm(`Are you sure you want to delete "${name}"?`)) {
+    if (
+      !window.confirm(
+        `Are you sure you want to delete "${name}"? This action cannot be undone.`,
+      )
+    ) {
       return;
     }
 
+    setDeleting(id);
     try {
       await deleteItem(id);
-      showSuccess("Item deleted successfully!");
+      showSuccess(`"${name}" deleted successfully!`);
+      fetchMenu(); // Refresh detailed menu data
     } catch (err) {
       showError("Delete failed: " + (err.response?.data?.error || err.message));
+    } finally {
+      setDeleting(null);
     }
   };
 
   const handleToggleActive = async (item) => {
+    const action = item.isActive !== false ? "deactivate" : "activate";
+    const confirmation = window.confirm(
+      `Are you sure you want to ${action} "${item.name}"?`,
+    );
+
+    if (!confirmation) return;
+
+    setToggling(item.id);
     try {
       await updateItem(item.id, { isActive: !item.isActive });
+      showSuccess(`"${item.name}" ${action}d successfully!`);
+      fetchMenu(); // Refresh detailed menu data
     } catch (err) {
-      showError("Failed to update item status");
+      showError(`Failed to ${action} item`);
+    } finally {
+      setToggling(null);
     }
   };
 
   const openStockModal = (item) => {
     setStockItem(item);
-    setNewStockQty(item.inventory?.quantity || 0);
     setShowStockModal(true);
   };
 
-  const updateStock = async () => {
+  const closeStockModal = () => {
+    setShowStockModal(false);
+    setStockItem(null);
+  };
+
+  const updateStock = async (newQuantity) => {
     if (!stockItem?.inventory?.id) {
       showWarning("No inventory record found for this item");
       return;
     }
 
+    if (isNaN(newQuantity) || newQuantity < 0) {
+      showWarning("Please enter a valid quantity");
+      return;
+    }
+
+    setUpdatingStock(true);
     try {
       await axios.put(`/api/inventory/${stockItem.inventory.id}`, {
-        quantity: parseInt(newStockQty),
+        quantity: newQuantity,
       });
-      showSuccess("Stock updated successfully!");
-      setShowStockModal(false);
-      setStockItem(null);
+      showSuccess(`Stock updated to ${newQuantity} units!`);
+      closeStockModal();
       fetchMenu(); // Refresh menu to get updated stock
     } catch (err) {
       showError(
-        "Failed to update stock: " +
-          (err.response?.data?.error || err.message)
+        "Failed to update stock: " + (err.response?.data?.error || err.message),
       );
+    } finally {
+      setUpdatingStock(false);
     }
+  };
+
+  // Handle view mode change with persistence
+  const handleViewModeChange = (mode) => {
+    setViewMode(mode);
+    localStorage.setItem("menuViewMode", mode);
+  };
+
+  // Handle sorting
+  const handleSort = (key) => {
+    setSortConfig((prev) => ({
+      key,
+      direction: prev.key === key && prev.direction === "asc" ? "desc" : "asc",
+    }));
   };
 
   const cancelForm = () => {
     setForm({
-      name: "",
-      description: "",
-      price: "",
-      categoryId: categories[0]?.id || 1,
+      ...DEFAULT_FORM_STATE,
+      categoryId: categories[0]?.id || DEFAULT_FORM_STATE.categoryId,
     });
     setShowForm(false);
     setEditMode(false);
     setEditingId(null);
   };
 
-  // Filter logic
-  const allCategories = ["All", ...categories.map((c) => c.name)];
-  const filteredItems = menuItems.filter((item) => {
-    const matchesSearch = item.name
-      .toLowerCase()
-      .includes(searchTerm.toLowerCase());
-    const matchesCategory =
-      selectedCategory === "All" || item.category?.name === selectedCategory;
-    return matchesSearch && matchesCategory;
+  // Keyboard shortcuts
+  useKeyboardShortcuts({
+    "/": () => searchInputRef.current?.focus(),
+    n: () => !showForm && setShowForm(true),
+    escape: () => {
+      if (showForm) cancelForm();
+      if (showStockModal) closeStockModal();
+      if (showFilters) setShowFilters(false);
+      if (showKeyboardHelp) setShowKeyboardHelp(false);
+    },
+    "?": () => setShowKeyboardHelp((prev) => !prev),
+    g: () => handleViewModeChange("grid"),
+    t: () => handleViewModeChange("table"),
+    r: () => !refreshing && fetchMenu(true),
   });
 
-  // Separate active and inactive items
-  const activeItems = filteredItems.filter((item) => item.isActive !== false);
-  const inactiveItems = filteredItems.filter((item) => item.isActive === false);
+  // Memoize category list
+  const allCategories = useMemo(() => {
+    return getAllCategories(categories);
+  }, [categories]);
+
+  // Memoize filtered items with debounced search
+  const filteredItems = useMemo(() => {
+    return filterMenuItems(menuItems, debouncedSearchTerm, selectedCategory);
+  }, [menuItems, debouncedSearchTerm, selectedCategory]);
+
+  // Memoize sorted items
+  const sortedItems = useMemo(() => {
+    if (!sortConfig.key) return filteredItems;
+
+    return [...filteredItems].sort((a, b) => {
+      let aVal, bVal;
+
+      switch (sortConfig.key) {
+        case "name":
+          aVal = a.name.toLowerCase();
+          bVal = b.name.toLowerCase();
+          break;
+        case "price":
+          aVal = parseFloat(a.price);
+          bVal = parseFloat(b.price);
+          break;
+        case "stock":
+          aVal = a.inventory?.quantity ?? 0;
+          bVal = b.inventory?.quantity ?? 0;
+          break;
+        case "category":
+          aVal = a.category?.name?.toLowerCase() || "";
+          bVal = b.category?.name?.toLowerCase() || "";
+          break;
+        case "status":
+          aVal = a.isActive !== false ? 1 : 0;
+          bVal = b.isActive !== false ? 1 : 0;
+          break;
+        default:
+          return 0;
+      }
+
+      if (aVal < bVal) return sortConfig.direction === "asc" ? -1 : 1;
+      if (aVal > bVal) return sortConfig.direction === "asc" ? 1 : -1;
+      return 0;
+    });
+  }, [filteredItems, sortConfig]);
+
+  // Memoize active/inactive separation
+  const { activeItems, inactiveItems } = useMemo(() => {
+    return separateActiveItems(sortedItems);
+  }, [sortedItems]);
+
+  // Sort icon component
+  const SortIcon = ({ columnKey }) => {
+    if (sortConfig.key !== columnKey) {
+      return <ArrowUpDown className="w-3.5 h-3.5 text-gray-400" />;
+    }
+    return sortConfig.direction === "asc" ? (
+      <ArrowUp className="w-3.5 h-3.5 text-red-500" />
+    ) : (
+      <ArrowDown className="w-3.5 h-3.5 text-red-500" />
+    );
+  };
 
   if (loading)
     return (
       <div className="min-h-screen bg-gray-50">
         <Navbar />
-        <div className="flex justify-center items-center p-16">
-          <div className="w-12 h-12 border-4 border-red-500 border-t-transparent rounded-full animate-spin"></div>
+        {/* Skeleton header */}
+        <div className="bg-white border-b border-gray-200 py-6">
+          <div className="max-w-7xl mx-auto px-6">
+            <div className="flex items-center justify-between">
+              <div className="space-y-2">
+                <div className="h-7 bg-gray-200 rounded w-48 animate-pulse"></div>
+                <div className="h-4 bg-gray-200 rounded w-64 animate-pulse"></div>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="h-11 w-11 bg-gray-200 rounded-xl animate-pulse"></div>
+                <div className="h-11 w-32 bg-gray-200 rounded-xl animate-pulse"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        {/* Skeleton content */}
+        <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
+            <div className="flex gap-4">
+              <div className="h-11 bg-gray-200 rounded-xl flex-1 animate-pulse"></div>
+              <div className="flex gap-2">
+                {[1, 2, 3].map((i) => (
+                  <div
+                    key={i}
+                    className="h-11 w-20 bg-gray-200 rounded-xl animate-pulse"
+                  ></div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden p-6">
+            <MenuTableSkeleton rows={6} />
+          </div>
         </div>
       </div>
     );
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100/50">
       <Navbar />
 
       {/* Page Header */}
-      <div className="bg-white border-b border-gray-200 py-6">
-        <div className="max-w-7xl mx-auto px-6">
-          <div className="flex items-center justify-between">
+      <div className="bg-white border-b border-gray-200 sticky top-0 z-30">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-4 sm:py-6">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
-              <h1 className="text-2xl font-bold text-gray-900">
+              <h1 className="text-xl sm:text-2xl font-bold text-gray-900 flex items-center gap-2">
+                <span className="bg-gradient-to-r from-red-500 to-orange-500 w-8 h-8 rounded-lg flex items-center justify-center">
+                  <Package className="w-5 h-5 text-white" />
+                </span>
                 Menu Management
               </h1>
               <p className="text-sm text-gray-500 mt-1">
-                {activeItems.length} active items • {inactiveItems.length}{" "}
-                inactive • {categories.length} categories
+                <span className="inline-flex items-center gap-1">
+                  <span className="w-2 h-2 bg-green-500 rounded-full"></span>
+                  {activeItems.length} active
+                </span>
+                <span className="mx-2">•</span>
+                <span className="text-gray-400">
+                  {inactiveItems.length} inactive
+                </span>
+                <span className="mx-2">•</span>
+                <span>{categories.length} categories</span>
               </p>
             </div>
-            <div className="flex items-center space-x-3">
+            <div className="flex items-center gap-2 sm:gap-3">
+              {/* View toggle */}
+              <div className="hidden sm:flex items-center bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => handleViewModeChange("table")}
+                  className={`p-2 rounded-md transition-all ${
+                    viewMode === "table"
+                      ? "bg-white text-red-600 shadow-sm"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                  title="Table view (T)"
+                  aria-label="Switch to table view"
+                >
+                  <List className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => handleViewModeChange("grid")}
+                  className={`p-2 rounded-md transition-all ${
+                    viewMode === "grid"
+                      ? "bg-white text-red-600 shadow-sm"
+                      : "text-gray-500 hover:text-gray-700"
+                  }`}
+                  title="Grid view (G)"
+                  aria-label="Switch to grid view"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Keyboard shortcuts hint */}
               <button
-                onClick={fetchMenu}
-                className="p-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl transition-all"
-                title="Refresh"
+                onClick={() => setShowKeyboardHelp(true)}
+                className="hidden sm:flex p-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg transition-all"
+                title="Keyboard shortcuts (?)"
               >
-                <RefreshCw className="w-5 h-5" />
+                <Keyboard className="w-4 h-4" />
               </button>
+
+              <button
+                onClick={() => fetchMenu(true)}
+                disabled={refreshing}
+                className="p-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-all disabled:opacity-50"
+                title="Refresh (R)"
+                aria-label="Refresh menu items"
+              >
+                <RefreshCw
+                  className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
+                />
+              </button>
+
               <button
                 onClick={() => setShowForm(!showForm)}
-                className={`flex items-center space-x-2 px-6 py-3 rounded-xl font-semibold shadow-md hover:shadow-lg transition-all ${
+                className={`flex items-center gap-2 px-4 sm:px-5 py-2.5 rounded-lg font-semibold shadow-sm hover:shadow transition-all ${
                   showForm
                     ? "bg-gray-200 text-gray-700 hover:bg-gray-300"
                     : "bg-gradient-to-r from-red-500 to-red-600 text-white hover:from-red-600 hover:to-red-700"
@@ -232,57 +522,65 @@ const MenuPage = () => {
         </div>
       </div>
 
-      <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8 space-y-6">
         {/* Add/Edit Form */}
         {showForm && (
-          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 p-8">
-            <h2 className="text-xl font-bold text-gray-900 mb-6 flex items-center">
-              <Package className="w-6 h-6 mr-2 text-red-500" />
-              {editMode ? "Edit Menu Item" : "Add New Item"}
-            </h2>
-            <form onSubmit={handleSubmit}>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Item Name *
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden animate-in slide-in-from-top-2 duration-300">
+            <div className="bg-gradient-to-r from-red-500 to-orange-500 px-6 py-4">
+              <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                <Package className="w-5 h-5" />
+                {editMode ? "Edit Menu Item" : "Add New Item"}
+              </h2>
+            </div>
+            <form onSubmit={handleSubmit} className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Item Name <span className="text-red-500">*</span>
                   </label>
                   <input
                     placeholder="e.g., Cappuccino"
                     value={form.name}
                     onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-red-300 focus:outline-none text-sm"
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:border-red-400 focus:ring-2 focus:ring-red-100 outline-none text-sm transition-all"
                     required
+                    autoFocus={!editMode}
                   />
                 </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Price (₹) *
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Price (₹) <span className="text-red-500">*</span>
                   </label>
-                  <input
-                    type="number"
-                    placeholder="0.00"
-                    value={form.price}
-                    onChange={(e) =>
-                      setForm({ ...form, price: e.target.value })
-                    }
-                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-red-300 focus:outline-none text-sm"
-                    step="0.01"
-                    min="0"
-                    required
-                  />
+                  <div className="relative">
+                    <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-sm">
+                      ₹
+                    </span>
+                    <input
+                      type="number"
+                      placeholder="0.00"
+                      value={form.price}
+                      onChange={(e) =>
+                        setForm({ ...form, price: e.target.value })
+                      }
+                      className="w-full pl-8 pr-4 py-2.5 border border-gray-200 rounded-lg focus:border-red-400 focus:ring-2 focus:ring-red-100 outline-none text-sm transition-all"
+                      step="0.01"
+                      min="0"
+                      required
+                    />
+                  </div>
                 </div>
 
-                <div>
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Category *
+                <div className="space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Category <span className="text-red-500">*</span>
                   </label>
                   <select
                     value={form.categoryId}
                     onChange={(e) =>
                       setForm({ ...form, categoryId: parseInt(e.target.value) })
                     }
-                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-red-300 focus:outline-none text-sm bg-white"
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:border-red-400 focus:ring-2 focus:ring-red-100 outline-none text-sm bg-white transition-all cursor-pointer"
                     required
                   >
                     {categories.map((cat) => (
@@ -293,9 +591,12 @@ const MenuPage = () => {
                   </select>
                 </div>
 
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-semibold text-gray-700 mb-2">
-                    Description
+                <div className="md:col-span-2 space-y-1.5">
+                  <label className="block text-sm font-medium text-gray-700">
+                    Description{" "}
+                    <span className="text-gray-400 font-normal">
+                      (optional)
+                    </span>
                   </label>
                   <textarea
                     placeholder="Brief description of the item..."
@@ -303,26 +604,37 @@ const MenuPage = () => {
                     onChange={(e) =>
                       setForm({ ...form, description: e.target.value })
                     }
-                    className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-red-300 focus:outline-none text-sm"
-                    rows="3"
+                    className="w-full px-4 py-2.5 border border-gray-200 rounded-lg focus:border-red-400 focus:ring-2 focus:ring-red-100 outline-none text-sm resize-none transition-all"
+                    rows="2"
                   />
                 </div>
               </div>
 
-              <div className="flex space-x-4 mt-8">
-                <button
-                  type="submit"
-                  className="flex-1 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white py-3 rounded-xl font-semibold shadow-md hover:shadow-lg transition-all flex items-center justify-center space-x-2"
-                >
-                  <Save className="w-5 h-5" />
-                  <span>{editMode ? "Update Item" : "Add to Menu"}</span>
-                </button>
+              <div className="flex flex-col-reverse sm:flex-row gap-3 mt-6 pt-6 border-t border-gray-100">
                 <button
                   type="button"
                   onClick={cancelForm}
-                  className="px-8 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-semibold transition-all"
+                  disabled={submitting}
+                  className="flex-1 sm:flex-none px-6 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg font-medium transition-colors disabled:opacity-50"
                 >
                   Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="flex-1 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white py-2.5 rounded-lg font-semibold shadow-sm hover:shadow transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {submitting ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>{editMode ? "Updating..." : "Adding..."}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Save className="w-4 h-4" />
+                      <span>{editMode ? "Update Item" : "Add to Menu"}</span>
+                    </>
+                  )}
                 </button>
               </div>
             </form>
@@ -331,231 +643,329 @@ const MenuPage = () => {
 
         {/* Search & Filter Bar */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4">
-          <div className="flex flex-col md:flex-row gap-4">
+          <div className="flex flex-col lg:flex-row gap-4">
+            {/* Search Input */}
             <div className="flex-1 relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
               <input
+                ref={searchInputRef}
                 type="text"
-                placeholder="Search menu items..."
+                placeholder="Search menu items... (press / to focus)"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-3 border-2 border-gray-200 rounded-xl focus:border-red-300 focus:outline-none text-sm"
+                className="w-full pl-10 pr-10 py-3 border-2 border-gray-200 rounded-xl focus:border-red-300 focus:ring-2 focus:ring-red-100 outline-none text-sm transition-all"
               />
-            </div>
-            <div className="flex items-center space-x-2 overflow-x-auto">
-              <Filter className="w-5 h-5 text-gray-400 flex-shrink-0" />
-              {allCategories.map((cat) => (
+              {searchTerm && (
                 <button
-                  key={cat}
-                  onClick={() => setSelectedCategory(cat)}
-                  className={`px-4 py-2.5 rounded-xl text-sm font-medium whitespace-nowrap transition-all ${
-                    selectedCategory === cat
-                      ? "bg-red-500 text-white shadow-md"
-                      : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                  onClick={() => setSearchTerm("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-full transition-colors"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
+            </div>
+
+            {/* Category filters & Sort */}
+            <div className="flex items-center gap-3 flex-wrap">
+              {/* Mobile view toggle */}
+              <div className="flex sm:hidden items-center bg-gray-100 rounded-lg p-1">
+                <button
+                  onClick={() => handleViewModeChange("table")}
+                  className={`p-2 rounded-md transition-all ${
+                    viewMode === "table"
+                      ? "bg-white text-red-600 shadow-sm"
+                      : "text-gray-500"
                   }`}
                 >
-                  {cat}
+                  <List className="w-4 h-4" />
                 </button>
-              ))}
+                <button
+                  onClick={() => handleViewModeChange("grid")}
+                  className={`p-2 rounded-md transition-all ${
+                    viewMode === "grid"
+                      ? "bg-white text-red-600 shadow-sm"
+                      : "text-gray-500"
+                  }`}
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+              </div>
+
+              {/* Filters toggle */}
+              <button
+                onClick={() => setShowFilters(!showFilters)}
+                className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-medium transition-all ${
+                  showFilters || selectedCategory !== "All"
+                    ? "bg-red-50 text-red-600 border border-red-200"
+                    : "bg-gray-100 text-gray-700 hover:bg-gray-200"
+                }`}
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                <span className="hidden sm:inline">Filters</span>
+                {selectedCategory !== "All" && (
+                  <span className="w-2 h-2 bg-red-500 rounded-full"></span>
+                )}
+              </button>
+
+              {/* Sort dropdown */}
+              <div className="relative">
+                <button
+                  onClick={() =>
+                    handleSort(
+                      sortConfig.key === "name"
+                        ? "price"
+                        : sortConfig.key === "price"
+                        ? "stock"
+                        : "name",
+                    )
+                  }
+                  className="flex items-center gap-2 px-3 py-2.5 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium text-gray-700 transition-all"
+                >
+                  <ArrowUpDown className="w-4 h-4" />
+                  <span className="hidden sm:inline capitalize">
+                    {sortConfig.key}
+                  </span>
+                  {sortConfig.direction === "asc" ? (
+                    <ArrowUp className="w-3 h-3" />
+                  ) : (
+                    <ArrowDown className="w-3 h-3" />
+                  )}
+                </button>
+              </div>
             </div>
           </div>
-        </div>
 
-        {/* Menu Items Table */}
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
-                <tr>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
-                    Item
-                  </th>
-                  <th className="px-6 py-4 text-left text-xs font-bold text-gray-700 uppercase tracking-wider">
-                    Category
-                  </th>
-                  <th className="px-6 py-4 text-right text-xs font-bold text-gray-700 uppercase tracking-wider">
-                    Price
-                  </th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-700 uppercase tracking-wider">
-                    Stock
-                  </th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-700 uppercase tracking-wider">
-                    Status
-                  </th>
-                  <th className="px-6 py-4 text-center text-xs font-bold text-gray-700 uppercase tracking-wider">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {filteredItems.map((item) => (
-                  <tr
-                    key={item.id}
-                    className={`hover:bg-gray-50 transition-colors ${
-                      item.isActive === false ? "opacity-60 bg-gray-50" : ""
+          {/* Expandable category filters */}
+          {showFilters && (
+            <div className="mt-4 pt-4 border-t border-gray-100">
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm text-gray-500 font-medium">
+                  Category:
+                </span>
+                {allCategories.map((cat) => (
+                  <button
+                    key={cat}
+                    onClick={() => setSelectedCategory(cat)}
+                    className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-all ${
+                      selectedCategory === cat
+                        ? "bg-red-500 text-white shadow-sm"
+                        : "bg-gray-100 text-gray-700 hover:bg-gray-200"
                     }`}
                   >
-                    <td className="px-6 py-4">
-                      <div>
-                        <p className="font-semibold text-gray-900">
-                          {item.name}
-                        </p>
-                        {item.description && (
-                          <p className="text-sm text-gray-500 mt-1 line-clamp-1">
-                            {item.description}
-                          </p>
-                        )}
-                      </div>
-                    </td>
-                    <td className="px-6 py-4">
-                      <span className="inline-flex items-center px-3 py-1 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
-                        {item.category?.name}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4 text-right">
-                      <span className="text-lg font-bold text-red-600">
-                        ₹{parseFloat(item.price).toFixed(2)}
-                      </span>
-                    </td>
-                    <td className="px-6 py-4">
-                      <button
-                        onClick={() => openStockModal(item)}
-                        className="flex items-center justify-center space-x-2 mx-auto px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors"
-                        title="Click to update stock"
-                      >
-                        {item.inventory?.lowStock && (
-                          <AlertCircle className="w-4 h-4 text-orange-500" />
-                        )}
-                        <span
-                          className={`font-semibold ${
-                            item.inventory?.quantity === 0
-                              ? "text-red-600"
-                              : item.inventory?.lowStock
-                              ? "text-orange-600"
-                              : "text-green-600"
-                          }`}
-                        >
-                          {item.inventory?.quantity ?? 0}
-                        </span>
-                        <PackagePlus className="w-4 h-4 text-gray-400" />
-                      </button>
-                    </td>
-                    <td className="px-6 py-4">
-                      <button
-                        onClick={() => handleToggleActive(item)}
-                        className="flex items-center justify-center mx-auto"
-                        title={
-                          item.isActive !== false
-                            ? "Click to deactivate"
-                            : "Click to activate"
-                        }
-                      >
-                        {item.isActive !== false ? (
-                          <ToggleRight className="w-8 h-8 text-green-500" />
-                        ) : (
-                          <ToggleLeft className="w-8 h-8 text-gray-400" />
-                        )}
-                      </button>
-                    </td>
-                    <td className="px-6 py-4">
-                      <div className="flex items-center justify-center space-x-2">
-                        <button
-                          onClick={() => handleEdit(item)}
-                          className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                          title="Edit"
-                        >
-                          <Edit className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDelete(item.id, item.name)}
-                          className="p-2 text-red-600 hover:bg-red-50 rounded-lg transition-colors"
-                          title="Delete"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
+                    {cat}
+                  </button>
                 ))}
-              </tbody>
-            </table>
-          </div>
-
-          {filteredItems.length === 0 && (
-            <div className="text-center py-16">
-              <Package className="w-16 h-16 text-gray-300 mx-auto mb-4" />
-              <p className="text-gray-500 font-medium">No items found</p>
-              <p className="text-gray-400 text-sm mt-1">
-                {searchTerm
-                  ? "Try different search terms"
-                  : "Add your first menu item"}
-              </p>
+              </div>
             </div>
           )}
         </div>
+
+        {/* Results info */}
+        <div className="flex items-center justify-between text-sm text-gray-500">
+          <span>
+            Showing {sortedItems.length} of {menuItems.length} items
+            {debouncedSearchTerm && ` matching "${debouncedSearchTerm}"`}
+          </span>
+          {selectedCategory !== "All" && (
+            <button
+              onClick={() => setSelectedCategory("All")}
+              className="text-red-600 hover:text-red-700 font-medium flex items-center gap-1"
+            >
+              <X className="w-3 h-3" />
+              Clear filter
+            </button>
+          )}
+        </div>
+
+        {/* Menu Items - Grid or Table View */}
+        {viewMode === "grid" ? (
+          /* Grid View */
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {sortedItems.length > 0 ? (
+              sortedItems.map((item) => (
+                <MenuItemCard
+                  key={item.id}
+                  item={item}
+                  onEdit={handleEdit}
+                  onDelete={handleDelete}
+                  onToggleActive={handleToggleActive}
+                  onUpdateStock={openStockModal}
+                  isDeleting={deleting === item.id}
+                  isToggling={toggling === item.id}
+                />
+              ))
+            ) : (
+              <div className="col-span-full">
+                <EmptyState
+                  icon={Package}
+                  title="No items found"
+                  message={
+                    searchTerm
+                      ? "Try adjusting your search or filters"
+                      : "Get started by adding your first menu item"
+                  }
+                  action={
+                    !searchTerm && (
+                      <button
+                        onClick={() => setShowForm(true)}
+                        className="px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors"
+                      >
+                        Add First Item
+                      </button>
+                    )
+                  }
+                />
+              </div>
+            )}
+          </div>
+        ) : (
+          /* Table View */
+          <div className="bg-white rounded-2xl shadow-lg border border-gray-200 overflow-hidden">
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead className="bg-gray-50/80 border-b border-gray-200">
+                  <tr>
+                    <th
+                      className="px-6 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort("name")}
+                    >
+                      <span className="flex items-center gap-2">
+                        Item
+                        <SortIcon columnKey="name" />
+                      </span>
+                    </th>
+                    <th
+                      className="px-6 py-4 text-left text-xs font-bold text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort("category")}
+                    >
+                      <span className="flex items-center gap-2">
+                        Category
+                        <SortIcon columnKey="category" />
+                      </span>
+                    </th>
+                    <th
+                      className="px-6 py-4 text-right text-xs font-bold text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort("price")}
+                    >
+                      <span className="flex items-center gap-2 justify-end">
+                        Price
+                        <SortIcon columnKey="price" />
+                      </span>
+                    </th>
+                    <th
+                      className="px-6 py-4 text-center text-xs font-bold text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort("stock")}
+                    >
+                      <span className="flex items-center gap-2 justify-center">
+                        Stock
+                        <SortIcon columnKey="stock" />
+                      </span>
+                    </th>
+                    <th
+                      className="px-6 py-4 text-center text-xs font-bold text-gray-600 uppercase tracking-wider cursor-pointer hover:bg-gray-100 transition-colors"
+                      onClick={() => handleSort("status")}
+                    >
+                      <span className="flex items-center gap-2 justify-center">
+                        Status
+                        <SortIcon columnKey="status" />
+                      </span>
+                    </th>
+                    <th className="px-6 py-4 text-center text-xs font-bold text-gray-600 uppercase tracking-wider">
+                      Actions
+                    </th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {sortedItems.map((item) => (
+                    <MenuItemRow
+                      key={item.id}
+                      item={item}
+                      onEdit={handleEdit}
+                      onDelete={handleDelete}
+                      onToggleActive={handleToggleActive}
+                      onUpdateStock={openStockModal}
+                      isDeleting={deleting === item.id}
+                      isToggling={toggling === item.id}
+                    />
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {sortedItems.length === 0 && (
+              <EmptyState
+                icon={Package}
+                title="No items found"
+                message={
+                  searchTerm
+                    ? "Try adjusting your search or filters"
+                    : "Get started by adding your first menu item"
+                }
+                action={
+                  !searchTerm && (
+                    <button
+                      onClick={() => setShowForm(true)}
+                      className="px-4 py-2 bg-red-500 text-white rounded-lg font-medium hover:bg-red-600 transition-colors"
+                    >
+                      Add First Item
+                    </button>
+                  )
+                }
+              />
+            )}
+          </div>
+        )}
       </div>
 
       {/* Stock Update Modal */}
-      {showStockModal && stockItem && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+      <StockUpdateModal
+        isOpen={showStockModal}
+        onClose={closeStockModal}
+        item={stockItem}
+        onUpdate={updateStock}
+        isUpdating={updatingStock}
+      />
+
+      {/* Keyboard Shortcuts Help Modal */}
+      {showKeyboardHelp && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          onClick={() => setShowKeyboardHelp(false)}
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <div
+            className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-xl font-bold text-gray-900">Update Stock</h3>
+              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+                <Keyboard className="w-5 h-5 text-gray-500" />
+                Keyboard Shortcuts
+              </h3>
               <button
-                onClick={() => {
-                  setShowStockModal(false);
-                  setStockItem(null);
-                }}
-                className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
+                onClick={() => setShowKeyboardHelp(false)}
+                className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
               >
-                <X className="w-6 h-6" />
+                <X className="w-5 h-5" />
               </button>
             </div>
-
-            <div className="mb-6">
-              <p className="text-lg font-semibold text-gray-900">
-                {stockItem.name}
-              </p>
-              <p className="text-sm text-gray-500">
-                {stockItem.category?.name}
-              </p>
-              <p className="text-sm text-gray-500 mt-2">
-                Current stock:{" "}
-                <span className="font-semibold">
-                  {stockItem.inventory?.quantity ?? 0}
-                </span>
-              </p>
-            </div>
-
-            <div className="mb-6">
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                New Quantity
-              </label>
-              <input
-                type="number"
-                value={newStockQty}
-                onChange={(e) => setNewStockQty(e.target.value)}
-                className="w-full px-4 py-3 border-2 border-gray-200 rounded-xl focus:border-red-300 focus:outline-none text-lg font-semibold text-center"
-                min="0"
-              />
-            </div>
-
-            <div className="flex space-x-3">
-              <button
-                onClick={updateStock}
-                className="flex-1 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white py-3 rounded-xl font-semibold transition-all"
-              >
-                Update Stock
-              </button>
-              <button
-                onClick={() => {
-                  setShowStockModal(false);
-                  setStockItem(null);
-                }}
-                className="px-6 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl font-semibold transition-all"
-              >
-                Cancel
-              </button>
+            <div className="space-y-3">
+              {[
+                { key: "/", desc: "Focus search" },
+                { key: "N", desc: "Add new item" },
+                { key: "G", desc: "Grid view" },
+                { key: "T", desc: "Table view" },
+                { key: "R", desc: "Refresh menu" },
+                { key: "?", desc: "Toggle shortcuts help" },
+                { key: "Esc", desc: "Close modal / Cancel" },
+              ].map(({ key, desc }) => (
+                <div key={key} className="flex items-center justify-between">
+                  <span className="text-sm text-gray-600">{desc}</span>
+                  <kbd className="px-2.5 py-1 bg-gray-100 border border-gray-200 rounded-lg text-xs font-mono text-gray-700">
+                    {key}
+                  </kbd>
+                </div>
+              ))}
             </div>
           </div>
         </div>

@@ -92,8 +92,33 @@ export const AuthProvider = ({ children }) => {
         setUser(null);
     };
 
+    // Role helper methods
+    const hasRole = (role) => {
+        return user?.role === role;
+    };
+
+    const hasAnyRole = (roles) => {
+        return roles.includes(user?.role);
+    };
+
+    const isAdmin = () => hasRole('ADMIN');
+    const isManager = () => hasRole('MANAGER');
+    const isChef = () => hasRole('CHEF');
+    const isAdminOrManager = () => hasAnyRole(['ADMIN', 'MANAGER']);
+
     return (
-        <AuthContext.Provider value={{ user, login, logout, loading }}>
+        <AuthContext.Provider value={{
+            user,
+            login,
+            logout,
+            loading,
+            hasRole,
+            hasAnyRole,
+            isAdmin,
+            isManager,
+            isChef,
+            isAdminOrManager
+        }}>
             {children}
         </AuthContext.Provider>
     );

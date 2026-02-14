@@ -26,6 +26,7 @@ app.use(express.json({ limit: '10mb' }));
 // Routes
 app.get('/api/health', (req, res) => res.json({ status: 'Backend OK' }));
 app.use('/api/auth', require('./src/routes/auth'));
+app.use('/api/users', require('./src/routes/users'));
 app.get('/api/protected', require('./src/middleware/auth'), (req, res) => {
     res.json({ msg: 'Protected OK', user: req.user });
 });
@@ -39,6 +40,7 @@ app.use('/api/ingredients', require('./src/routes/ingredients'));
 app.use('/api/modifications', require('./src/routes/modifications'));
 app.use('/api/delivery', require('./src/routes/delivery'));
 app.use('/api/payment', require('./src/routes/payment'));
+app.use('/api/kitchen', require('./src/routes/kitchen'));
 
 app.use(errorHandler);
 

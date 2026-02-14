@@ -14,6 +14,11 @@ exports.login = async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
+        // Check if user is active
+        if (!user.isActive) {
+            return res.status(403).json({ error: 'Account is deactivated. Please contact an administrator.' });
+        }
+
         const token = jwt.sign(
             { userId: user.id, role: user.role },
             process.env.JWT_SECRET,
@@ -22,7 +27,13 @@ exports.login = async (req, res) => {
 
         res.json({
             token,
-            user: { id: user.id, email: user.email, role: user.role }
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                role: user.role,
+                isActive: user.isActive
+            }
         });
     } catch (error) {
         res.status(500).json({ error: 'Server error' });
@@ -32,11 +43,16 @@ exports.login = async (req, res) => {
 // Register (seed first owner)
 exports.register = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { email, password, name } = req.body;
         const hashedPassword = bcrypt.hashSync(password, SALT_ROUNDS);
 
         const user = await prisma.user.create({
-            data: { email, password: hashedPassword, role: 'owner' }
+            data: {
+                email,
+                password: hashedPassword,
+                name: name || null,
+                role: 'ADMIN' // Default role for registration
+            }
         });
 
         const token = jwt.sign(
@@ -47,7 +63,13 @@ exports.register = async (req, res) => {
 
         res.status(201).json({
             token,
-            user: { id: user.id, email: user.email, role: user.role }
+            user: {
+                id: user.id,
+                email: user.email,
+                name: user.name,
+                role: user.role,
+                isActive: user.isActive
+            }
         });
     } catch (error) {
         res.status(400).json({ error: 'User exists or invalid data' });

@@ -2,17 +2,20 @@ const express = require('express');
 const router = express.Router();
 const orderController = require('../controllers/orderController');
 const auth = require('../middleware/auth');
+const { adminOrManager, allRoles } = require('../middleware/authorize');
 const { prisma } = require('../prisma');
 
-router.post('/', auth, orderController.createOrder);
-router.get('/', auth, orderController.getOrders);
-router.get('/active', auth, orderController.getActiveOrders);
-router.put('/:id', auth, orderController.updateOrder);
-router.put('/:id/status', auth, orderController.updateOrderStatus);
-router.get('/tables', auth, orderController.getTables);
+// Routes accessible to all authenticated users (including Chef)
+router.get('/active', auth, allRoles, orderController.getActiveOrders);  // Chef needs to see active orders
+router.put('/:id/status', auth, allRoles, orderController.updateOrderStatus);  // Chef needs to update status
 
+// Management routes - Admin and Manager only
+router.post('/', auth, adminOrManager, orderController.createOrder);
+router.get('/', auth, adminOrManager, orderController.getOrders);
+router.put('/:id', auth, adminOrManager, orderController.updateOrder);
+router.get('/tables', auth, adminOrManager, orderController.getTables);
 
-router.get('/recent', auth, async (req, res) => {
+router.get('/recent', auth, adminOrManager, async (req, res) => {
     try {
         const orders = await prisma.order.findMany({
             take: 5,
@@ -28,8 +31,8 @@ router.get('/recent', auth, async (req, res) => {
     }
 });
 
-// Pay Later routes
-router.post('/pay-later', auth, orderController.createPayLaterOrder);
-router.get('/pending-payments', auth, orderController.getPendingPayments);
+// Pay Later routes - Admin and Manager only
+router.post('/pay-later', auth, adminOrManager, orderController.createPayLaterOrder);
+router.get('/pending-payments', auth, adminOrManager, orderController.getPendingPayments);
 
 module.exports = router;

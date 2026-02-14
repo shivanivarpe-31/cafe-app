@@ -266,12 +266,12 @@ exports.updateOrder = async (req, res, next) => {
             throw createNotFoundError('Order', orderId);
         }
 
-        // Only allow editing PENDING orders
-        if (existingOrder.status !== 'PENDING') {
+        // Only allow editing PENDING, PREPARING, or SERVED orders (before payment)
+        if (!['PENDING', 'PREPARING', 'SERVED'].includes(existingOrder.status)) {
             throw createOrderStatusError(
-                'Order can only be edited when in PENDING status',
+                'Order can only be edited when in PENDING, PREPARING, or SERVED status',
                 existingOrder.status,
-                'PENDING'
+                'PENDING, PREPARING, or SERVED'
             );
         }
 

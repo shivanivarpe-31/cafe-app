@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import {
   CreditCard,
@@ -24,9 +24,71 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
     address: "",
   });
 
+  // Set default payment mode based on order type
+  useEffect(() => {
+    if (order && isOpen) {
+      const isPlatformDelivery =
+        order.orderType === "DELIVERY" &&
+        order.deliveryInfo?.deliveryPlatform &&
+        ["ZOMATO", "SWIGGY"].includes(order.deliveryInfo.deliveryPlatform);
+
+      if (isPlatformDelivery) {
+        setPaymentMode("ALREADY_PAID");
+      } else {
+        setPaymentMode("RAZORPAY");
+      }
+    }
+  }, [order, isOpen]);
+
   if (!isOpen || !order) return null;
 
   const amount = parseFloat(order.total);
+
+  // Determine available payment methods based on order type
+  const isPlatformDelivery =
+    order.orderType === "DELIVERY" &&
+    order.deliveryInfo?.deliveryPlatform &&
+    ["ZOMATO", "SWIGGY"].includes(order.deliveryInfo.deliveryPlatform);
+
+  const isDirectDelivery =
+    order.orderType === "DELIVERY" &&
+    order.deliveryInfo?.deliveryPlatform === "DIRECT";
+
+  const isDineIn = order.orderType === "DINE_IN";
+  const isTakeaway = order.orderType === "TAKEAWAY";
+
+  // Available payment methods for each order type
+  const availablePaymentMethods = {
+    // DINE_IN: All methods available
+    DINE_IN: ["RAZORPAY", "CASH", "CARD", "UPI", "SPLIT", "PAY_LATER"],
+
+    // TAKEAWAY: All except Pay Later (needs immediate payment)
+    TAKEAWAY: ["RAZORPAY", "CASH", "CARD", "UPI", "SPLIT"],
+
+    // DELIVERY - Platform orders: Only "Already Paid" through platform
+    PLATFORM_DELIVERY: ["ALREADY_PAID"],
+
+    // DELIVERY - Direct: Prefer online, allow COD
+    DIRECT_DELIVERY: ["RAZORPAY", "CASH", "CARD", "UPI"],
+  };
+
+  // Get current available methods
+  let currentAvailableMethods;
+  if (isPlatformDelivery) {
+    currentAvailableMethods = availablePaymentMethods.PLATFORM_DELIVERY;
+  } else if (isDirectDelivery) {
+    currentAvailableMethods = availablePaymentMethods.DIRECT_DELIVERY;
+  } else if (isDineIn) {
+    currentAvailableMethods = availablePaymentMethods.DINE_IN;
+  } else if (isTakeaway) {
+    currentAvailableMethods = availablePaymentMethods.TAKEAWAY;
+  } else {
+    // Default to all methods
+    currentAvailableMethods = availablePaymentMethods.DINE_IN;
+  }
+
+  // Check if a payment method is available
+  const isMethodAvailable = (method) => currentAvailableMethods.includes(method);
 
   // Load Razorpay script dynamically
   const loadRazorpayScript = () => {
@@ -217,22 +279,25 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
       handleRazorpayPayment();
     } else if (paymentMode === "PAY_LATER") {
       handlePayLater();
+    } else if (paymentMode === "ALREADY_PAID") {
+      // For platform orders (Zomato/Swiggy), mark as paid through platform
+      handleManualPayment("PLATFORM_PAID");
     } else {
       handleManualPayment(paymentMode);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
+      <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-bold text-gray-900">Complete Payment</h3>
+        <div className="flex items-center justify-between mb-4 sm:mb-6">
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900">Complete Payment</h3>
           <button
             onClick={onClose}
             className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
           >
-            <X className="w-6 h-6" />
+            <X className="w-5 h-5 sm:w-6 sm:h-6" />
           </button>
         </div>
 
@@ -262,135 +327,210 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
           </div>
         </div>
 
+        {/* Platform Order Info Banner */}
+        {isPlatformDelivery && (
+          <div className="mb-6 p-4 bg-blue-50 border-2 border-blue-200 rounded-xl">
+            <div className="flex items-start space-x-3">
+              <CheckCircle className="w-5 h-5 text-blue-600 mt-0.5" />
+              <div>
+                <h4 className="text-sm font-semibold text-blue-900 mb-1">
+                  {order.deliveryInfo.deliveryPlatform} Order
+                </h4>
+                <p className="text-xs text-blue-700">
+                  Payment already collected by{" "}
+                  {order.deliveryInfo.deliveryPlatform}. Mark order as paid to
+                  complete processing.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Order Type Info */}
+        {(isDirectDelivery || isTakeaway) && (
+          <div className="mb-4 p-3 bg-gray-50 border border-gray-200 rounded-lg">
+            <p className="text-sm text-gray-700">
+              {isDirectDelivery && (
+                <span>
+                  💡 <strong>Direct Delivery:</strong> Online payment recommended, cash on delivery available
+                </span>
+              )}
+              {isTakeaway && (
+                <span>
+                  💡 <strong>Takeaway Order:</strong> Immediate payment required
+                </span>
+              )}
+            </p>
+          </div>
+        )}
+
         {/* Payment Methods */}
-        <div className="mb-6">
-          <label className="block text-sm font-semibold text-gray-700 mb-3">
+        <div className="mb-4 sm:mb-6">
+          <label className="block text-sm font-semibold text-gray-700 mb-2 sm:mb-3">
             Select Payment Method
           </label>
-          <div className="grid grid-cols-2 gap-3">
-            <button
-              onClick={() => setPaymentMode("RAZORPAY")}
-              className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-2 ${
-                paymentMode === "RAZORPAY"
-                  ? "border-red-500 bg-red-50"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <CreditCard
-                className={`w-6 h-6 ${
-                  paymentMode === "RAZORPAY" ? "text-red-600" : "text-gray-600"
-                }`}
-              />
-              <span
-                className={`text-sm font-medium ${
-                  paymentMode === "RAZORPAY" ? "text-red-600" : "text-gray-700"
+          <div className="grid grid-cols-2 gap-2 sm:gap-3">
+            {/* Already Paid (Platform Orders) */}
+            {isMethodAvailable("ALREADY_PAID") && (
+              <button
+                onClick={() => setPaymentMode("ALREADY_PAID")}
+                className="col-span-2 p-3 sm:p-4 rounded-xl border-2 border-blue-500 bg-blue-50 transition-all flex items-center justify-center space-x-2 sm:space-x-3 active:scale-95"
+              >
+                <CheckCircle className="w-5 h-5 sm:w-6 sm:h-6 text-blue-600 flex-shrink-0" />
+                <div className="text-left">
+                  <span className="block text-xs sm:text-sm font-bold text-blue-600">
+                    Already Paid via {order.deliveryInfo?.deliveryPlatform}
+                  </span>
+                  <span className="block text-[10px] sm:text-xs text-blue-700">
+                    Mark order as paid to continue
+                  </span>
+                </div>
+              </button>
+            )}
+
+            {/* Online Payment (Razorpay) */}
+            {isMethodAvailable("RAZORPAY") && (
+              <button
+                onClick={() => setPaymentMode("RAZORPAY")}
+                className={`p-3 sm:p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-1 sm:space-y-2 min-h-[100px] sm:min-h-[120px] active:scale-95 ${
+                  paymentMode === "RAZORPAY"
+                    ? "border-red-500 bg-red-50"
+                    : "border-gray-200 hover:border-gray-300"
                 }`}
               >
-                Online Payment
-              </span>
-              <span className="text-xs text-gray-500">
-                UPI / Card / Netbanking
-              </span>
-            </button>
+                <CreditCard
+                  className={`w-5 h-5 sm:w-6 sm:h-6 ${
+                    paymentMode === "RAZORPAY" ? "text-red-600" : "text-gray-600"
+                  }`}
+                />
+                <span
+                  className={`text-xs sm:text-sm font-medium text-center ${
+                    paymentMode === "RAZORPAY" ? "text-red-600" : "text-gray-700"
+                  }`}
+                >
+                  Online Payment
+                </span>
+                <span className="text-xs text-gray-500">
+                  UPI / Card / Netbanking
+                </span>
+              </button>
+            )}
 
-            <button
-              onClick={() => setPaymentMode("CASH")}
-              className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-2 ${
-                paymentMode === "CASH"
-                  ? "border-green-500 bg-green-50"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <Banknote
-                className={`w-6 h-6 ${
-                  paymentMode === "CASH" ? "text-green-600" : "text-gray-600"
-                }`}
-              />
-              <span
-                className={`text-sm font-medium ${
-                  paymentMode === "CASH" ? "text-green-600" : "text-gray-700"
+            {/* Cash */}
+            {isMethodAvailable("CASH") && (
+              <button
+                onClick={() => setPaymentMode("CASH")}
+                className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-2 ${
+                  paymentMode === "CASH"
+                    ? "border-green-500 bg-green-50"
+                    : "border-gray-200 hover:border-gray-300"
                 }`}
               >
-                Cash
-              </span>
-              <span className="text-xs text-gray-500">Pay at counter</span>
-            </button>
+                <Banknote
+                  className={`w-6 h-6 ${
+                    paymentMode === "CASH" ? "text-green-600" : "text-gray-600"
+                  }`}
+                />
+                <span
+                  className={`text-sm font-medium ${
+                    paymentMode === "CASH" ? "text-green-600" : "text-gray-700"
+                  }`}
+                >
+                  Cash
+                </span>
+                <span className="text-xs text-gray-500">
+                  {isDirectDelivery ? "Cash on Delivery" : "Pay at counter"}
+                </span>
+              </button>
+            )}
 
-            <button
-              onClick={() => setPaymentMode("CARD")}
-              className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-2 ${
-                paymentMode === "CARD"
-                  ? "border-blue-500 bg-blue-50"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <CreditCard
-                className={`w-6 h-6 ${
-                  paymentMode === "CARD" ? "text-blue-600" : "text-gray-600"
-                }`}
-              />
-              <span
-                className={`text-sm font-medium ${
-                  paymentMode === "CARD" ? "text-blue-600" : "text-gray-700"
-                }`}
-              >
-                Card (POS)
-              </span>
-              <span className="text-xs text-gray-500">Swipe machine</span>
-            </button>
-
-            <button
-              onClick={() => setPaymentMode("UPI")}
-              className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-2 ${
-                paymentMode === "UPI"
-                  ? "border-purple-500 bg-purple-50"
-                  : "border-gray-200 hover:border-gray-300"
-              }`}
-            >
-              <Wallet
-                className={`w-6 h-6 ${
-                  paymentMode === "UPI" ? "text-purple-600" : "text-gray-600"
-                }`}
-              />
-              <span
-                className={`text-sm font-medium ${
-                  paymentMode === "UPI" ? "text-purple-600" : "text-gray-700"
+            {/* Card (POS) */}
+            {isMethodAvailable("CARD") && (
+              <button
+                onClick={() => setPaymentMode("CARD")}
+                className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-2 ${
+                  paymentMode === "CARD"
+                    ? "border-blue-500 bg-blue-50"
+                    : "border-gray-200 hover:border-gray-300"
                 }`}
               >
-                UPI (Manual)
-              </span>
-              <span className="text-xs text-gray-500">PhonePe / GPay</span>
-            </button>
+                <CreditCard
+                  className={`w-6 h-6 ${
+                    paymentMode === "CARD" ? "text-blue-600" : "text-gray-600"
+                  }`}
+                />
+                <span
+                  className={`text-sm font-medium ${
+                    paymentMode === "CARD" ? "text-blue-600" : "text-gray-700"
+                  }`}
+                >
+                  Card (POS)
+                </span>
+                <span className="text-xs text-gray-500">Swipe machine</span>
+              </button>
+            )}
 
-            <button
-              onClick={() => {
-                setPaymentMode("SPLIT");
-                setShowSplitInterface(true);
-              }}
-              className="p-4 rounded-xl border-2 border-orange-200 hover:border-orange-300 bg-gradient-to-r from-orange-50 to-yellow-50 transition-all flex flex-col items-center space-y-2"
-            >
-              <Split className="w-6 h-6 text-orange-600" />
-              <span className="text-sm font-medium text-orange-600">
-                Split Payment
-              </span>
-              <span className="text-xs text-gray-500">Pay with 2 methods</span>
-            </button>
+            {/* UPI (Manual) */}
+            {isMethodAvailable("UPI") && (
+              <button
+                onClick={() => setPaymentMode("UPI")}
+                className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-2 ${
+                  paymentMode === "UPI"
+                    ? "border-purple-500 bg-purple-50"
+                    : "border-gray-200 hover:border-gray-300"
+                }`}
+              >
+                <Wallet
+                  className={`w-6 h-6 ${
+                    paymentMode === "UPI" ? "text-purple-600" : "text-gray-600"
+                  }`}
+                />
+                <span
+                  className={`text-sm font-medium ${
+                    paymentMode === "UPI" ? "text-purple-600" : "text-gray-700"
+                  }`}
+                >
+                  UPI (Manual)
+                </span>
+                <span className="text-xs text-gray-500">PhonePe / GPay</span>
+              </button>
+            )}
 
-            <button
-              onClick={() => {
-                setPaymentMode("PAY_LATER");
-                setShowPayLaterForm(true);
-              }}
-              className="p-4 rounded-xl border-2 border-indigo-200 hover:border-indigo-300 bg-gradient-to-r from-indigo-50 to-blue-50 transition-all flex flex-col items-center space-y-2"
-            >
-              <Clock className="w-6 h-6 text-indigo-600" />
-              <span className="text-sm font-medium text-indigo-600">
-                Pay Later
-              </span>
-              <span className="text-xs text-gray-500">
-                Save customer details
-              </span>
-            </button>
+            {/* Split Payment */}
+            {isMethodAvailable("SPLIT") && (
+              <button
+                onClick={() => {
+                  setPaymentMode("SPLIT");
+                  setShowSplitInterface(true);
+                }}
+                className="p-4 rounded-xl border-2 border-orange-200 hover:border-orange-300 bg-gradient-to-r from-orange-50 to-yellow-50 transition-all flex flex-col items-center space-y-2"
+              >
+                <Split className="w-6 h-6 text-orange-600" />
+                <span className="text-sm font-medium text-orange-600">
+                  Split Payment
+                </span>
+                <span className="text-xs text-gray-500">Pay with 2 methods</span>
+              </button>
+            )}
+
+            {/* Pay Later */}
+            {isMethodAvailable("PAY_LATER") && (
+              <button
+                onClick={() => {
+                  setPaymentMode("PAY_LATER");
+                  setShowPayLaterForm(true);
+                }}
+                className="p-4 rounded-xl border-2 border-indigo-200 hover:border-indigo-300 bg-gradient-to-r from-indigo-50 to-blue-50 transition-all flex flex-col items-center space-y-2"
+              >
+                <Clock className="w-6 h-6 text-indigo-600" />
+                <span className="text-sm font-medium text-indigo-600">
+                  Pay Later
+                </span>
+                <span className="text-xs text-gray-500">
+                  Save customer details
+                </span>
+              </button>
+            )}
           </div>
         </div>
 
@@ -475,6 +615,8 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
                 <span>
                   {paymentMode === "RAZORPAY"
                     ? `Pay ₹${amount.toFixed(0)}`
+                    : paymentMode === "ALREADY_PAID"
+                    ? "Confirm Payment Received"
                     : "Mark as Paid"}
                 </span>
               </>

@@ -1,7 +1,24 @@
 const { prisma } = require('../prisma');
 
-// Get all menu items
+// Get lightweight menu items (for billing/ordering - no ingredients)
 exports.getMenuItems = async (req, res, next) => {
+    try {
+        const menuItems = await prisma.menuItem.findMany({
+            include: {
+                category: true  // Only include category for display
+            },
+            orderBy: { name: 'asc' }
+        });
+
+        res.json(menuItems);
+    } catch (error) {
+        console.error('Get menu items error:', error);
+        next(error);
+    }
+};
+
+// Get detailed menu items (for menu management - includes ingredients & inventory)
+exports.getDetailedMenuItems = async (req, res, next) => {
     try {
         const menuItems = await prisma.menuItem.findMany({
             include: {
@@ -18,7 +35,7 @@ exports.getMenuItems = async (req, res, next) => {
 
         res.json(menuItems);
     } catch (error) {
-        console.error('Get menu items error:', error);
+        console.error('Get detailed menu items error:', error);
         next(error);
     }
 };

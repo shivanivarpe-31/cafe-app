@@ -23,9 +23,18 @@ import {
 } from "recharts";
 import Navbar from "../components/navbar";
 
+// Quick date presets
+const DATE_PRESETS = [
+  { label: "Last 7 Days", days: 7 },
+  { label: "Last 30 Days", days: 30 },
+  { label: "Last 90 Days", days: 90 },
+  { label: "This Year", days: "year" },
+];
+
 const ProfitAnalysisPage = () => {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [activePreset, setActivePreset] = useState("Last 30 Days");
   const [dateRange, setDateRange] = useState({
     from: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000)
       .toISOString()
@@ -38,7 +47,7 @@ const ProfitAnalysisPage = () => {
 
   const api = useMemo(() => {
     const instance = axios.create({
-      baseURL: "http://localhost:5001/api",
+      baseURL: "/api",
     });
     instance.interceptors.request.use((config) => {
       const token = localStorage.getItem("token");
@@ -102,8 +111,42 @@ const ProfitAnalysisPage = () => {
     return (
       <div className="min-h-screen bg-gray-50">
         <Navbar />
-        <div className="flex justify-center items-center p-16">
-          <div className="w-12 h-12 border-4 border-red-500 border-t-transparent rounded-full animate-spin"></div>
+        <div className="bg-white border-b border-gray-200 py-6">
+          <div className="max-w-7xl mx-auto px-6">
+            <div className="animate-pulse">
+              <div className="h-8 w-48 bg-gray-200 rounded mb-2"></div>
+              <div className="h-4 w-64 bg-gray-100 rounded"></div>
+            </div>
+          </div>
+        </div>
+        <div className="max-w-7xl mx-auto px-6 py-8 space-y-8">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            {[1, 2, 3, 4].map((i) => (
+              <div
+                key={i}
+                className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 animate-pulse"
+              >
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="h-4 w-24 bg-gray-200 rounded mb-2"></div>
+                    <div className="h-8 w-32 bg-gray-200 rounded"></div>
+                  </div>
+                  <div className="w-12 h-12 bg-gray-200 rounded-xl"></div>
+                </div>
+              </div>
+            ))}
+          </div>
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {[1, 2].map((i) => (
+              <div
+                key={i}
+                className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 animate-pulse"
+              >
+                <div className="h-6 w-40 bg-gray-200 rounded mb-6"></div>
+                <div className="h-64 bg-gray-100 rounded-xl"></div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );
@@ -127,30 +170,67 @@ const ProfitAnalysisPage = () => {
               </p>
             </div>
 
-            <div className="flex items-center space-x-3">
+            <div className="flex flex-wrap items-center gap-3">
+              {/* Quick Presets */}
+              <div className="flex rounded-xl border border-gray-200 overflow-hidden">
+                {DATE_PRESETS.map((preset) => (
+                  <button
+                    key={preset.label}
+                    onClick={() => {
+                      setActivePreset(preset.label);
+                      const today = new Date();
+                      const to = today.toISOString().split("T")[0];
+                      let from;
+                      if (preset.days === "year") {
+                        from = new Date(today.getFullYear(), 0, 1)
+                          .toISOString()
+                          .split("T")[0];
+                      } else {
+                        from = new Date(
+                          Date.now() - preset.days * 24 * 60 * 60 * 1000,
+                        )
+                          .toISOString()
+                          .split("T")[0];
+                      }
+                      setDateRange({ from, to });
+                    }}
+                    className={`px-3 py-2 text-sm font-medium transition-colors ${
+                      activePreset === preset.label
+                        ? "bg-green-500 text-white"
+                        : "bg-white text-gray-600 hover:bg-gray-50"
+                    }`}
+                  >
+                    {preset.label}
+                  </button>
+                ))}
+              </div>
+
               <div className="flex items-center space-x-2 bg-gray-50 rounded-xl px-3 py-2 border border-gray-200">
                 <Calendar className="w-4 h-4 text-gray-500" />
                 <input
                   type="date"
                   value={dateRange.from}
-                  onChange={(e) =>
-                    setDateRange({ ...dateRange, from: e.target.value })
-                  }
+                  onChange={(e) => {
+                    setDateRange({ ...dateRange, from: e.target.value });
+                    setActivePreset(null);
+                  }}
                   className="text-sm bg-transparent focus:outline-none"
                 />
                 <span className="text-gray-400">to</span>
                 <input
                   type="date"
                   value={dateRange.to}
-                  onChange={(e) =>
-                    setDateRange({ ...dateRange, to: e.target.value })
-                  }
+                  onChange={(e) => {
+                    setDateRange({ ...dateRange, to: e.target.value });
+                    setActivePreset(null);
+                  }}
                   className="text-sm bg-transparent focus:outline-none"
                 />
               </div>
               <button
                 onClick={fetchData}
-                className="p-3 bg-gray-100 hover:bg-gray-200 rounded-xl"
+                className="p-3 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors"
+                title="Refresh data"
               >
                 <RefreshCw className="w-5 h-5" />
               </button>
@@ -163,7 +243,7 @@ const ProfitAnalysisPage = () => {
         {/* Summary Cards */}
         {data?.summary && (
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Total Revenue</p>
@@ -177,7 +257,7 @@ const ProfitAnalysisPage = () => {
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Total Cost</p>
@@ -191,7 +271,7 @@ const ProfitAnalysisPage = () => {
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-gray-600">Total Profit</p>
@@ -205,7 +285,7 @@ const ProfitAnalysisPage = () => {
               </div>
             </div>
 
-            <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl shadow-sm p-6 text-white">
+            <div className="bg-gradient-to-br from-green-500 to-emerald-600 rounded-2xl shadow-sm p-6 text-white hover:shadow-lg transition-shadow">
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-green-100">Avg Profit Margin</p>
@@ -255,7 +335,7 @@ const ProfitAnalysisPage = () => {
         {/* Profit Margin Chart */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
           {/* Best Performers */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow">
             <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
               <TrendingUp className="w-5 h-5 mr-2 text-green-500" />
               Best Profit Margins
@@ -289,7 +369,7 @@ const ProfitAnalysisPage = () => {
           </div>
 
           {/* Worst Performers */}
-          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+          <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow">
             <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
               <TrendingDown className="w-5 h-5 mr-2 text-red-500" />
               Needs Attention (Lowest Margins)
@@ -324,7 +404,7 @@ const ProfitAnalysisPage = () => {
         </div>
 
         {/* All Items Table */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 overflow-hidden hover:shadow-lg transition-shadow">
           <div className="p-6 border-b border-gray-200">
             <h2 className="text-lg font-bold text-gray-900">All Menu Items</h2>
             <p className="text-sm text-gray-500">
@@ -396,7 +476,7 @@ const ProfitAnalysisPage = () => {
                 {sortedItems.map((item) => (
                   <React.Fragment key={item.id}>
                     <tr
-                      className="hover:bg-gray-50 cursor-pointer"
+                      className="hover:bg-green-50 cursor-pointer transition-colors"
                       onClick={() =>
                         setExpandedItem(
                           expandedItem === item.id ? null : item.id,
@@ -485,27 +565,35 @@ const ProfitAnalysisPage = () => {
         </div>
 
         {/* Legend */}
-        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+        <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6 hover:shadow-lg transition-shadow">
           <div className="flex items-center space-x-2 mb-4">
             <Info className="w-5 h-5 text-gray-500" />
             <h3 className="font-semibold text-gray-900">Profit Margin Guide</h3>
           </div>
-          <div className="flex flex-wrap gap-4">
-            <div className="flex items-center space-x-2">
+          <div className="flex flex-wrap gap-6">
+            <div className="flex items-center space-x-2 px-3 py-2 bg-green-50 rounded-lg">
               <span className="w-4 h-4 rounded bg-green-500"></span>
-              <span className="text-sm text-gray-600">Excellent (60%+)</span>
+              <span className="text-sm font-medium text-green-700">
+                Excellent (60%+)
+              </span>
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 px-3 py-2 bg-blue-50 rounded-lg">
               <span className="w-4 h-4 rounded bg-blue-500"></span>
-              <span className="text-sm text-gray-600">Good (40-60%)</span>
+              <span className="text-sm font-medium text-blue-700">
+                Good (40-60%)
+              </span>
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 px-3 py-2 bg-yellow-50 rounded-lg">
               <span className="w-4 h-4 rounded bg-yellow-500"></span>
-              <span className="text-sm text-gray-600">Fair (20-40%)</span>
+              <span className="text-sm font-medium text-yellow-700">
+                Fair (20-40%)
+              </span>
             </div>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-2 px-3 py-2 bg-red-50 rounded-lg">
               <span className="w-4 h-4 rounded bg-red-500"></span>
-              <span className="text-sm text-gray-600">Low (&lt;20%)</span>
+              <span className="text-sm font-medium text-red-700">
+                Low (&lt;20%)
+              </span>
             </div>
           </div>
         </div>

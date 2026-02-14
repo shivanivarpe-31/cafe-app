@@ -126,14 +126,9 @@ const BillingPage = () => {
   }, [fetchTables]);
 
   const addToCart = (item) => {
-    if (!item.inventory || item.inventory.quantity <= 0) {
-      showError(`${item.name} is out of stock!`);
-      return;
-    }
-
     const menuItemId = item.id;
 
-    // NEW: Check for existing item without modifications
+    // Check for existing item without modifications
     const existingIndex = cart.findIndex(
       (c) =>
         c.menuItemId === menuItemId &&
@@ -142,28 +137,22 @@ const BillingPage = () => {
     );
 
     if (existingIndex >= 0) {
-      const existing = cart[existingIndex];
-      if (existing.quantity + 1 > item.inventory.quantity) {
-        showWarning(
-          `Only ${item.inventory.quantity} ${item.name} available in stock!`,
-        );
-        return;
-      }
+      // Increment quantity for existing item
       const updated = [...cart];
       updated[existingIndex].quantity += 1;
       setCart(updated);
     } else {
+      // Add new item to cart
       setCart([
         ...cart,
         {
-          menuItemId: menuItemId, // Explicitly set menuItemId
-          id: menuItemId, // Keep id for backward compatibility
+          menuItemId: menuItemId,
+          id: menuItemId,
           name: item.name,
           price: parseFloat(item.price),
           quantity: 1,
           notes: "",
           modifications: [],
-          inventory: item.inventory, // Keep inventory for stock checks
         },
       ]);
     }
@@ -172,12 +161,6 @@ const BillingPage = () => {
   const updateQuantity = (index, qty) => {
     if (qty <= 0) {
       setCart(cart.filter((_, i) => i !== index));
-      return;
-    }
-    const item = cart[index];
-    const menuItem = menuItems.find((m) => m.id === item.menuItemId);
-    if (menuItem && menuItem.inventory && qty > menuItem.inventory.quantity) {
-      showWarning(`Only ${menuItem.inventory.quantity} ${item.name} available!`);
       return;
     }
     const updated = [...cart];
@@ -475,7 +458,7 @@ const BillingPage = () => {
                   <div
                     key={item.id}
                     onClick={() => addToCart(item)}
-                    className="bg-white rounded-2xl shadow-sm border-2 border-gray-200 p-4 hover:shadow-lg hover:border-red-300 transition-all cursor-pointer group relative"
+                    className="bg-white rounded-2xl shadow-sm border-2 border-gray-200 p-4 hover:shadow-lg hover:border-red-300 transition-all cursor-pointer group"
                   >
                     <div className="aspect-square bg-gray-100 rounded-xl mb-3 flex items-center justify-center group-hover:bg-red-50 transition-colors">
                       <span className="text-4xl">🍽️</span>
@@ -490,25 +473,7 @@ const BillingPage = () => {
                       <p className="text-lg font-bold text-red-600">
                         ₹{item.price}
                       </p>
-                      <span
-                        className={`text-xs px-2 py-1 rounded-full font-medium ${
-                          item.inventory?.quantity === 0
-                            ? "bg-red-100 text-red-700"
-                            : item.inventory?.lowStock
-                            ? "bg-orange-100 text-orange-700"
-                            : "bg-green-100 text-green-700"
-                        }`}
-                      >
-                        {item.inventory?.quantity ?? 0}
-                      </span>
                     </div>
-                    {item.inventory?.quantity === 0 && (
-                      <div className="absolute inset-0 bg-gray-900/50 rounded-2xl flex items-center justify-center">
-                        <span className="text-white font-bold text-sm">
-                          OUT OF STOCK
-                        </span>
-                      </div>
-                    )}
                   </div>
                 ))}
               </div>

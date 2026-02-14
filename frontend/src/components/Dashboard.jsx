@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useMenu } from "../context/MenuContext";
 import {
   DollarSign,
@@ -14,12 +14,44 @@ import {
   Bell,
   Volume2,
   VolumeX,
+  Link as LinkIcon,
+  ChefHat,
+  Keyboard,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
 import Navbar from "../components/navbar";
+import TableMergeModal from "../components/TableMergeModal";
+import KeyboardShortcutsHelp from "../components/KeyboardShortcutsHelp";
 import { useSmartPolling } from "../hooks/useSmartPolling";
+import {
+  useKeyboardShortcuts,
+  useNavigationShortcuts,
+} from "../hooks/useKeyboardShortcuts";
 import { showSuccess, showError, showWarning } from "../utils/toast";
+import {
+  POLLING_INTERVALS,
+  ALERT_DURATION,
+  MAX_DELIVERY_ORDERS_PREVIEW,
+  MAX_RECENT_ORDERS,
+  DASHBOARD_SECTIONS,
+  NOTIFICATION_SOUNDS,
+  VOICE_SETTINGS,
+} from "../utils/dashboardConstants";
+import {
+  getStatus,
+  getTableColor,
+  getStatusBadge,
+  getPlatformStyle,
+  getPlatformBorder,
+  getDeliveryStatusColor,
+  getTimeRemaining,
+  getTimeAgo,
+  calculateOccupancyPercentage,
+  getActiveDeliveryOrders,
+  detectNewOrders,
+  validateReservationData,
+} from "../utils/dashboardHelpers";
 
 const Dashboard = () => {
   const { menuItems } = useMenu();
@@ -40,6 +72,7 @@ const Dashboard = () => {
   const [tables, setTables] = useState([]);
   const [recentOrders, setRecentOrders] = useState([]);
   const [showReservationForm, setShowReservationForm] = useState(false);
+  const [showMergeModal, setShowMergeModal] = useState(false);
   const [reservationData, setReservationData] = useState({
     tableId: "",
     customerName: "",
@@ -52,77 +85,36 @@ const Dashboard = () => {
   const [deliveryOrders, setDeliveryOrders] = useState([]);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [newOrderAlert, setNewOrderAlert] = useState(false);
+  const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
+
+  // Loading states for async actions
+  const [clearingTable, setClearingTable] = useState(null);
+  const [updatingDeliveryStatus, setUpdatingDeliveryStatus] = useState(null);
 
   // Use ref to track previous order IDs (doesn't cause re-renders)
   const previousOrderIdsRef = useRef(new Set());
   const isFirstLoadRef = useRef(true);
+  const abortControllerRef = useRef(null);
 
   // Sections shown as filter buttons
-  const sections = ["All Tables", "Available", "Occupied", "Reserved"];
+  const sections = DASHBOARD_SECTIONS;
 
-  // Helper - normalize status strings
-  const getStatus = (status) => String(status || "").toLowerCase();
+  // Global navigation shortcuts
+  useNavigationShortcuts();
 
-  const getTableColor = (status) => {
-    switch (getStatus(status)) {
-      case "occupied":
-        return "bg-red-50 border-red-200";
-      case "reserved":
-        return "bg-yellow-50 border-yellow-300";
-      case "available":
-      default:
-        return "bg-white border-gray-200";
-    }
-  };
-
-  const getStatusBadge = (status) => {
-    switch (getStatus(status)) {
-      case "occupied":
-        return "bg-red-500";
-      case "reserved":
-        return "bg-yellow-500";
-      case "available":
-      default:
-        return "bg-gray-400";
-    }
-  };
-
-  // Platform colors
-  const getPlatformStyle = (platform) => {
-    switch (platform) {
-      case "ZOMATO":
-        return "bg-red-500 text-white";
-      case "SWIGGY":
-        return "bg-orange-500 text-white";
-      default:
-        return "bg-gray-500 text-white";
-    }
-  };
-
-  const getPlatformBorder = (platform) => {
-    switch (platform) {
-      case "ZOMATO":
-        return "border-red-400 bg-red-50";
-      case "SWIGGY":
-        return "border-orange-400 bg-orange-50";
-      default:
-        return "border-blue-400 bg-blue-50";
-    }
-  };
-
-  // Delivery status colors
-  const getDeliveryStatusColor = (status) => {
-    const colors = {
-      PENDING: "bg-yellow-100 text-yellow-800",
-      CONFIRMED: "bg-blue-100 text-blue-800",
-      PREPARING: "bg-orange-100 text-orange-800",
-      READY_FOR_PICKUP: "bg-green-100 text-green-800",
-      OUT_FOR_DELIVERY: "bg-purple-100 text-purple-800",
-      DELIVERED: "bg-green-500 text-white",
-      CANCELLED: "bg-red-100 text-red-800",
-    };
-    return colors[status] || "bg-gray-100 text-gray-800";
-  };
+  // Dashboard-specific shortcuts
+  useKeyboardShortcuts({
+    "1": () => setSelectedSection("All Tables"),
+    "2": () => setSelectedSection("Available"),
+    "3": () => setSelectedSection("Occupied"),
+    "4": () => setSelectedSection("Reserved"),
+    "?": () => setShowShortcutsHelp(true),
+    escape: () => {
+      if (showShortcutsHelp) setShowShortcutsHelp(false);
+      else if (showReservationForm) setShowReservationForm(false);
+      else if (showMergeModal) setShowMergeModal(false);
+    },
+  });
 
   // Play notification sound
   const playNotificationSound = useCallback(() => {
@@ -139,7 +131,7 @@ const Dashboard = () => {
       oscillator.connect(gainNode);
       gainNode.connect(audioContext.destination);
 
-      oscillator.frequency.value = 800;
+      oscillator.frequency.value = NOTIFICATION_SOUNDS.FIRST_DING;
       oscillator.type = "sine";
 
       gainNode.gain.setValueAtTime(0.5, audioContext.currentTime);
@@ -159,7 +151,7 @@ const Dashboard = () => {
         osc2.connect(gain2);
         gain2.connect(audioContext.destination);
 
-        osc2.frequency.value = 1000;
+        osc2.frequency.value = NOTIFICATION_SOUNDS.SECOND_DING;
         osc2.type = "sine";
 
         gain2.gain.setValueAtTime(0.5, audioContext.currentTime);
@@ -170,16 +162,14 @@ const Dashboard = () => {
 
         osc2.start(audioContext.currentTime);
         osc2.stop(audioContext.currentTime + 0.5);
-      }, 200);
+      }, NOTIFICATION_SOUNDS.DELAY_MS);
 
       // Voice alert
       if ("speechSynthesis" in window) {
-        const utterance = new SpeechSynthesisUtterance(
-          "New online order received!",
-        );
-        utterance.rate = 1.1;
-        utterance.pitch = 1;
-        utterance.volume = 1;
+        const utterance = new SpeechSynthesisUtterance(VOICE_SETTINGS.TEXT);
+        utterance.rate = VOICE_SETTINGS.RATE;
+        utterance.pitch = VOICE_SETTINGS.PITCH;
+        utterance.volume = VOICE_SETTINGS.VOLUME;
         window.speechSynthesis.speak(utterance);
       }
     } catch (err) {
@@ -189,12 +179,21 @@ const Dashboard = () => {
 
   // Fetch all dashboard data
   const fetchDashboardData = useCallback(async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     setRefreshing(true);
     try {
       const results = await Promise.allSettled([
-        axios.get("/api/reports/stats"),
-        axios.get("/api/tables"),
-        axios.get("/api/delivery"),
+        axios.get("/api/reports/stats", {
+          signal: abortControllerRef.current.signal,
+        }),
+        axios.get("/api/tables", { signal: abortControllerRef.current.signal }),
+        axios.get("/api/delivery", {
+          signal: abortControllerRef.current.signal,
+        }),
       ]);
 
       const [statsRes, tablesRes, deliveryRes] = results;
@@ -210,7 +209,9 @@ const Dashboard = () => {
       if (statsRes.status === "fulfilled") {
         const statsData = statsRes.value.data || {};
         setStats(statsData);
-        setRecentOrders((statsData.recentOrders || []).slice(0, 5));
+        setRecentOrders(
+          (statsData.recentOrders || []).slice(0, MAX_RECENT_ORDERS),
+        );
       } else {
         setStats({
           todaySales: 0,
@@ -224,32 +225,22 @@ const Dashboard = () => {
       // Handle delivery orders
       if (deliveryRes.status === "fulfilled") {
         const orders = deliveryRes.value.data || [];
+        const activeOrders = getActiveDeliveryOrders(orders);
 
-        // Filter pending/active orders
-        const activeOrders = orders.filter(
-          (o) =>
-            o.deliveryInfo?.deliveryStatus === "PENDING" ||
-            o.deliveryInfo?.deliveryStatus === "CONFIRMED" ||
-            o.deliveryInfo?.deliveryStatus === "PREPARING" ||
-            o.deliveryInfo?.deliveryStatus === "READY_FOR_PICKUP",
-        );
-
-        // Check for new orders (only after first load)
         if (!isFirstLoadRef.current) {
-          const currentOrderIds = new Set(activeOrders.map((o) => o.id));
-          const newOrders = activeOrders.filter(
-            (o) => !previousOrderIdsRef.current.has(o.id),
+          const newOrders = detectNewOrders(
+            activeOrders,
+            previousOrderIdsRef.current,
           );
 
           if (newOrders.length > 0) {
             playNotificationSound();
             setNewOrderAlert(true);
-            setTimeout(() => setNewOrderAlert(false), 5000);
+            setTimeout(() => setNewOrderAlert(false), ALERT_DURATION);
           }
 
-          previousOrderIdsRef.current = currentOrderIds;
+          previousOrderIdsRef.current = new Set(activeOrders.map((o) => o.id));
         } else {
-          // First load - just set the IDs without alerting
           previousOrderIdsRef.current = new Set(activeOrders.map((o) => o.id));
           isFirstLoadRef.current = false;
         }
@@ -259,6 +250,9 @@ const Dashboard = () => {
         setDeliveryOrders([]);
       }
     } catch (err) {
+      if (err.name === "AbortError" || err.name === "CanceledError") {
+        return;
+      }
       console.error("Error fetching dashboard data:", err);
     } finally {
       setRefreshing(false);
@@ -266,13 +260,22 @@ const Dashboard = () => {
     }
   }, [playNotificationSound]);
 
-  // Smart polling for dashboard data (only when page is visible and user is active)
+  // Smart polling
   useSmartPolling(
     fetchDashboardData,
-    60000, // Poll every 1 minute when user is active
-    180000, // Poll every 3 minutes when user is inactive
-    300000, // Consider user inactive after 5 minutes of no activity
+    POLLING_INTERVALS.ACTIVE_POLL,
+    POLLING_INTERVALS.IDLE_POLL,
+    POLLING_INTERVALS.INACTIVE_AFTER,
   );
+
+  // Cleanup abort controller on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   // Listen for order updates from other components
   useEffect(() => {
@@ -286,27 +289,49 @@ const Dashboard = () => {
     };
   }, [fetchDashboardData]);
 
-  // Filter tables according to selectedSection
-  const filteredTables = tables.filter((t) => {
-    const s = selectedSection;
-    if (!t) return false;
-    const status = getStatus(t.status);
-    if (s === "All Tables") return true;
-    if (s === "Available") return status === "available";
-    if (s === "Occupied") return status === "occupied";
-    if (s === "Reserved") return status === "reserved";
-    return true;
-  });
+  // Memoized values
+  const filteredTables = useMemo(() => {
+    return tables.filter((t) => {
+      if (!t) return false;
+      const status = getStatus(t.status);
+      if (selectedSection === "All Tables") return true;
+      if (selectedSection === "Available") return status === "available";
+      if (selectedSection === "Occupied") return status === "occupied";
+      if (selectedSection === "Reserved") return status === "reserved";
+      return true;
+    });
+  }, [tables, selectedSection]);
+
+  const occupiedCount = useMemo(() => {
+    return tables.filter((t) => getStatus(t.status) === "occupied").length;
+  }, [tables]);
+
+  const occupancyPct = useMemo(() => {
+    return calculateOccupancyPercentage(tables);
+  }, [tables]);
 
   // Quick action: clear table
   const requestClearTable = async (tableId) => {
+    if (
+      !window.confirm(
+        "Are you sure you want to clear this table and mark it as available?",
+      )
+    ) {
+      return;
+    }
+
+    setClearingTable(tableId);
     try {
       await axios.put(`/api/orders/tables/${tableId}/status`, {
         status: "AVAILABLE",
       });
+      showSuccess("Table cleared successfully");
       fetchDashboardData();
     } catch (err) {
       console.error("Failed to clear table:", err);
+      showError(err.response?.data?.error || "Failed to clear table");
+    } finally {
+      setClearingTable(null);
     }
   };
 
@@ -314,35 +339,25 @@ const Dashboard = () => {
   const createReservation = async (e) => {
     e.preventDefault();
 
-    const {
-      tableId,
-      customerName,
-      reservedFrom,
-      reservedUntil,
-    } = reservationData;
-    if (!tableId || !customerName || !reservedFrom || !reservedUntil) {
-      showWarning(
-        "Please fill table, customer name, start and end times for the reservation.",
-      );
+    const validation = validateReservationData(reservationData);
+    if (!validation.valid) {
+      showWarning(validation.error);
       return;
     }
 
-    const from = new Date(reservedFrom);
-    const to = new Date(reservedUntil);
-    if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
-      showWarning("Invalid reservation dates.");
-      return;
-    }
-    if (from >= to) {
-      showWarning("Reservation start must be earlier than end.");
-      return;
-    }
+    const {
+      tableId,
+      customerName,
+      customerPhone,
+      reservedFrom,
+      reservedUntil,
+    } = reservationData;
 
     try {
       await axios.post("/api/tables/reserve", {
         tableId,
         customerName,
-        customerPhone: reservationData.customerPhone,
+        customerPhone,
         reservedFrom,
         reservedUntil,
       });
@@ -355,11 +370,11 @@ const Dashboard = () => {
         reservedUntil: "",
       });
       setShowReservationForm(false);
-      fetchDashboardData();
       showSuccess("Reservation created successfully!");
+      fetchDashboardData();
     } catch (err) {
       console.error("Reservation error:", err);
-      showError("Failed to create reservation");
+      showError(err.response?.data?.error || "Failed to create reservation");
     }
   };
 
@@ -371,14 +386,19 @@ const Dashboard = () => {
   // Quick update delivery status
   const updateDeliveryStatus = async (orderId, newStatus, e) => {
     e.stopPropagation();
+
+    setUpdatingDeliveryStatus(orderId);
     try {
       await axios.put(`/api/delivery/${orderId}/status`, {
         deliveryStatus: newStatus,
       });
+      showSuccess(`Order status updated to ${newStatus.replace(/_/g, " ")}`);
       fetchDashboardData();
     } catch (err) {
       console.error("Failed to update status:", err);
-      showError("Failed to update status");
+      showError(err.response?.data?.error || "Failed to update status");
+    } finally {
+      setUpdatingDeliveryStatus(null);
     }
   };
 
@@ -398,7 +418,7 @@ const Dashboard = () => {
     try {
       const res = await axios.post("/api/delivery/simulate", { platform });
       console.log(`✅ Simulated ${platform} order:`, res.data.billNumber);
-      // Refresh to show new order
+      showSuccess(`Test ${platform} order created`);
       fetchDashboardData();
     } catch (err) {
       console.error("Failed to simulate order:", err);
@@ -406,45 +426,8 @@ const Dashboard = () => {
     }
   };
 
-  // Table occupancy percentage
-  const totalTables = tables.length || 1;
-  const occupiedCount = tables.filter((t) => getStatus(t.status) === "occupied")
-    .length;
-  const occupancyPct = Math.round((occupiedCount / totalTables) * 100);
-
-  // Format time remaining for reservation
-  const getTimeRemaining = (reservedUntil) => {
-    if (!reservedUntil) return null;
-
-    const now = new Date();
-    const until = new Date(reservedUntil);
-    const diff = until.getTime() - now.getTime();
-
-    if (diff <= 0) return "Expired";
-
-    const minutes = Math.floor(diff / 60000);
-    const hours = Math.floor(minutes / 60);
-    const remainingMinutes = minutes % 60;
-
-    if (hours > 0) {
-      return `${hours}h ${remainingMinutes}m left`;
-    }
-    return `${minutes}m left`;
-  };
-
-  // Format time ago
-  const getTimeAgo = (date) => {
-    const now = new Date();
-    const orderDate = new Date(date);
-    const diff = now.getTime() - orderDate.getTime();
-    const minutes = Math.floor(diff / 60000);
-
-    if (minutes < 1) return "Just now";
-    if (minutes < 60) return `${minutes}m ago`;
-    const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours}h ago`;
-    return orderDate.toLocaleDateString();
-  };
+  // Only show test buttons in development
+  const isDevelopment = process.env.NODE_ENV === "development";
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -473,6 +456,14 @@ const Dashboard = () => {
               Dashboard Overview
             </h2>
             <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setShowShortcutsHelp(true)}
+                className="hidden sm:flex items-center space-x-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-medium transition-all"
+                title="Keyboard Shortcuts (?)"
+              >
+                <Keyboard className="w-4 h-4" />
+                <span>Shortcuts</span>
+              </button>
               <button
                 onClick={() => setSoundEnabled(!soundEnabled)}
                 className={`p-2 rounded-lg transition-all ${
@@ -617,120 +608,142 @@ const Dashboard = () => {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {deliveryOrders.slice(0, 6).map((order) => (
-                <div
-                  key={order.id}
-                  onClick={() => handleDeliveryOrderClick(order.id)}
-                  className={`relative cursor-pointer rounded-xl border-2 p-4 transition-all hover:shadow-lg hover:-translate-y-1 ${getPlatformBorder(
-                    order.deliveryInfo?.deliveryPlatform,
-                  )}`}
-                >
-                  <div className="flex items-center justify-between mb-3">
-                    <span
-                      className={`px-3 py-1 rounded-full text-xs font-bold ${getPlatformStyle(
-                        order.deliveryInfo?.deliveryPlatform,
-                      )}`}
-                    >
-                      {order.deliveryInfo?.deliveryPlatform || "DIRECT"}
-                    </span>
-                    <span
-                      className={`px-2 py-1 rounded-full text-xs font-medium ${getDeliveryStatusColor(
-                        order.deliveryInfo?.deliveryStatus,
-                      )}`}
-                    >
-                      {order.deliveryInfo?.deliveryStatus?.replace(/_/g, " ") ||
-                        order.status}
-                    </span>
-                  </div>
-
-                  <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-gray-900">
-                        {order.billNumber}
+              {deliveryOrders
+                .slice(0, MAX_DELIVERY_ORDERS_PREVIEW)
+                .map((order) => (
+                  <div
+                    key={order.id}
+                    onClick={() => handleDeliveryOrderClick(order.id)}
+                    className={`relative cursor-pointer rounded-xl border-2 p-4 transition-all hover:shadow-lg hover:-translate-y-1 ${getPlatformBorder(
+                      order.deliveryInfo?.deliveryPlatform,
+                    )}`}
+                  >
+                    <div className="flex items-center justify-between mb-3">
+                      <span
+                        className={`px-3 py-1 rounded-full text-xs font-bold ${getPlatformStyle(
+                          order.deliveryInfo?.deliveryPlatform,
+                        )}`}
+                      >
+                        {order.deliveryInfo?.deliveryPlatform || "DIRECT"}
                       </span>
-                      <span className="text-xs text-gray-500">
-                        {getTimeAgo(order.createdAt)}
+                      <span
+                        className={`px-2 py-1 rounded-full text-xs font-medium ${getDeliveryStatusColor(
+                          order.deliveryInfo?.deliveryStatus,
+                        )}`}
+                      >
+                        {order.deliveryInfo?.deliveryStatus?.replace(
+                          /_/g,
+                          " ",
+                        ) || order.status}
                       </span>
                     </div>
 
-                    <p className="text-sm font-semibold text-gray-800">
-                      {order.deliveryInfo?.customerName}
-                    </p>
-                    <p className="text-xs text-gray-500">
-                      📞 {order.deliveryInfo?.customerPhone}
-                    </p>
-
-                    {order.deliveryInfo?.deliveryAddress && (
-                      <p className="text-xs text-gray-500 truncate">
-                        📍 {order.deliveryInfo.deliveryAddress}
-                      </p>
-                    )}
-
-                    <div className="pt-2 border-t border-gray-200">
-                      <p className="text-xs text-gray-600">
-                        {order.items?.length || 0} items •
-                        <span className="font-bold text-red-600 ml-1">
-                          ₹{parseFloat(order.total).toFixed(0)}
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-gray-900">
+                          {order.billNumber}
                         </span>
-                      </p>
-                    </div>
-                  </div>
+                        <span className="text-xs text-gray-500">
+                          {getTimeAgo(order.createdAt)}
+                        </span>
+                      </div>
 
-                  <div className="mt-3 flex space-x-2">
+                      <p className="text-sm font-semibold text-gray-800">
+                        {order.deliveryInfo?.customerName}
+                      </p>
+                      <p className="text-xs text-gray-500">
+                        📞 {order.deliveryInfo?.customerPhone}
+                      </p>
+
+                      {order.deliveryInfo?.deliveryAddress && (
+                        <p className="text-xs text-gray-500 truncate">
+                          📍 {order.deliveryInfo.deliveryAddress}
+                        </p>
+                      )}
+
+                      <div className="pt-2 border-t border-gray-200">
+                        <p className="text-xs text-gray-600">
+                          {order.items?.length || 0} items •
+                          <span className="font-bold text-red-600 ml-1">
+                            ₹{parseFloat(order.total).toFixed(0)}
+                          </span>
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="mt-3 flex space-x-2">
+                      {order.deliveryInfo?.deliveryStatus === "PENDING" && (
+                        <button
+                          onClick={(e) =>
+                            updateDeliveryStatus(order.id, "PREPARING", e)
+                          }
+                          disabled={updatingDeliveryStatus === order.id}
+                          className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded-lg transition-all disabled:opacity-50"
+                        >
+                          {updatingDeliveryStatus === order.id
+                            ? "Updating..."
+                            : "Accept & Prepare"}
+                        </button>
+                      )}
+                      {order.deliveryInfo?.deliveryStatus === "PREPARING" && (
+                        <button
+                          onClick={(e) =>
+                            updateDeliveryStatus(
+                              order.id,
+                              "READY_FOR_PICKUP",
+                              e,
+                            )
+                          }
+                          disabled={updatingDeliveryStatus === order.id}
+                          className="flex-1 py-2 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold rounded-lg transition-all disabled:opacity-50"
+                        >
+                          {updatingDeliveryStatus === order.id
+                            ? "Updating..."
+                            : "Mark Ready"}
+                        </button>
+                      )}
+                      {order.deliveryInfo?.deliveryStatus ===
+                        "READY_FOR_PICKUP" && (
+                        <button
+                          onClick={(e) =>
+                            updateDeliveryStatus(
+                              order.id,
+                              "OUT_FOR_DELIVERY",
+                              e,
+                            )
+                          }
+                          disabled={updatingDeliveryStatus === order.id}
+                          className="flex-1 py-2 bg-purple-500 hover:bg-purple-600 text-white text-xs font-semibold rounded-lg transition-all disabled:opacity-50"
+                        >
+                          {updatingDeliveryStatus === order.id
+                            ? "Updating..."
+                            : "Out for Delivery"}
+                        </button>
+                      )}
+                    </div>
+
                     {order.deliveryInfo?.deliveryStatus === "PENDING" && (
-                      <button
-                        onClick={(e) =>
-                          updateDeliveryStatus(order.id, "PREPARING", e)
-                        }
-                        className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded-lg transition-all"
-                      >
-                        Accept & Prepare
-                      </button>
-                    )}
-                    {order.deliveryInfo?.deliveryStatus === "PREPARING" && (
-                      <button
-                        onClick={(e) =>
-                          updateDeliveryStatus(order.id, "READY_FOR_PICKUP", e)
-                        }
-                        className="flex-1 py-2 bg-green-500 hover:bg-green-600 text-white text-xs font-semibold rounded-lg transition-all"
-                      >
-                        Mark Ready
-                      </button>
-                    )}
-                    {order.deliveryInfo?.deliveryStatus ===
-                      "READY_FOR_PICKUP" && (
-                      <button
-                        onClick={(e) =>
-                          updateDeliveryStatus(order.id, "OUT_FOR_DELIVERY", e)
-                        }
-                        className="flex-1 py-2 bg-purple-500 hover:bg-purple-600 text-white text-xs font-semibold rounded-lg transition-all"
-                      >
-                        Out for Delivery
-                      </button>
+                      <div className="absolute -top-2 -right-2">
+                        <span className="flex h-5 w-5">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                          <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 items-center justify-center">
+                            <Bell className="w-3 h-3 text-white" />
+                          </span>
+                        </span>
+                      </div>
                     )}
                   </div>
-
-                  {order.deliveryInfo?.deliveryStatus === "PENDING" && (
-                    <div className="absolute -top-2 -right-2">
-                      <span className="flex h-5 w-5">
-                        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-                        <span className="relative inline-flex rounded-full h-5 w-5 bg-red-500 items-center justify-center">
-                          <Bell className="w-3 h-3 text-white" />
-                        </span>
-                      </span>
-                    </div>
-                  )}
-                </div>
-              ))}
+                ))}
             </div>
 
-            {deliveryOrders.length > 6 && (
+            {deliveryOrders.length > MAX_DELIVERY_ORDERS_PREVIEW && (
               <div className="mt-4 text-center">
                 <Link
                   to="/delivery"
                   className="text-red-600 hover:text-red-700 font-semibold text-sm"
                 >
-                  +{deliveryOrders.length - 6} more orders →
+                  +{deliveryOrders.length - MAX_DELIVERY_ORDERS_PREVIEW} more
+                  orders →
                 </Link>
               </div>
             )}
@@ -780,8 +793,18 @@ const Dashboard = () => {
                   to={`/billing?table=${table.id}`}
                   className={`group relative ${getTableColor(
                     table.status,
-                  )} border-2 rounded-2xl p-4 transition-all duration-300 hover:shadow-xl hover:-translate-y-1`}
+                  )} border-2 rounded-2xl p-4 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 ${
+                    table.isMerged ? "ring-2 ring-blue-400" : ""
+                  }`}
                 >
+                  {table.isMerged && (
+                    <div className="absolute -top-2 -left-2">
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500 text-white shadow-md">
+                        <LinkIcon className="w-3 h-3 mr-1" />
+                        Merged
+                      </span>
+                    </div>
+                  )}
                   <div className="text-center">
                     <div
                       className={`w-14 h-14 mx-auto mb-2 rounded-xl flex items-center justify-center shadow-md transition-all duration-300 group-hover:scale-110 ${getStatusBadge(
@@ -828,10 +851,15 @@ const Dashboard = () => {
                           e.preventDefault();
                           requestClearTable(table.id);
                         }}
-                        className="p-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg shadow-md"
+                        disabled={clearingTable === table.id}
+                        className="p-1 bg-emerald-500 hover:bg-emerald-600 text-white rounded-lg shadow-md disabled:opacity-50"
                         title="Payment Done - Clear Table"
                       >
-                        <CheckCircle className="w-3 h-3" />
+                        {clearingTable === table.id ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <CheckCircle className="w-3 h-3" />
+                        )}
                       </button>
                       <div className="p-1 bg-white rounded-lg shadow-md hover:bg-gray-50">
                         <Eye className="w-3 h-3 text-gray-600" />
@@ -916,6 +944,20 @@ const Dashboard = () => {
                   <Plus className="w-4 h-4" />
                   <span>New Reservation</span>
                 </button>
+                <button
+                  onClick={() => setShowMergeModal(true)}
+                  className="w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-xl bg-gradient-to-r from-blue-500 to-indigo-600 text-white font-semibold"
+                >
+                  <LinkIcon className="w-4 h-4" />
+                  <span>Merge/Split Tables</span>
+                </button>
+                <Link
+                  to="/kitchen"
+                  className="w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-xl bg-gradient-to-r from-green-500 to-teal-600 text-white font-semibold"
+                >
+                  <ChefHat className="w-4 h-4" />
+                  <span>Kitchen Display</span>
+                </Link>
                 <Link
                   to="/delivery"
                   className="w-full flex items-center justify-center space-x-2 px-4 py-3 rounded-xl bg-gradient-to-r from-orange-500 to-red-500 text-white font-semibold"
@@ -923,20 +965,22 @@ const Dashboard = () => {
                   <Truck className="w-4 h-4" />
                   <span>Delivery Orders</span>
                 </Link>
-                <div className="flex space-x-2 mt-3">
-                  <button
-                    onClick={() => simulateOnlineOrder("ZOMATO")}
-                    className="flex-1 py-2 bg-red-500 hover:bg-red-600 text-white text-xs font-semibold rounded-lg transition-all"
-                  >
-                    Test Zomato
-                  </button>
-                  <button
-                    onClick={() => simulateOnlineOrder("SWIGGY")}
-                    className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded-lg transition-all"
-                  >
-                    Test Swiggy
-                  </button>
-                </div>
+                {isDevelopment && (
+                  <div className="flex space-x-2 mt-3">
+                    <button
+                      onClick={() => simulateOnlineOrder("ZOMATO")}
+                      className="flex-1 py-2 bg-red-500 hover:bg-red-600 text-white text-xs font-semibold rounded-lg transition-all"
+                    >
+                      Test Zomato
+                    </button>
+                    <button
+                      onClick={() => simulateOnlineOrder("SWIGGY")}
+                      className="flex-1 py-2 bg-orange-500 hover:bg-orange-600 text-white text-xs font-semibold rounded-lg transition-all"
+                    >
+                      Test Swiggy
+                    </button>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -1076,6 +1120,20 @@ const Dashboard = () => {
                 </div>
               </div>
             )}
+
+            {/* Table Merge Modal */}
+            <TableMergeModal
+              isOpen={showMergeModal}
+              onClose={() => setShowMergeModal(false)}
+              tables={tables}
+              onTablesUpdated={fetchDashboardData}
+            />
+
+            {/* Keyboard Shortcuts Help */}
+            <KeyboardShortcutsHelp
+              isOpen={showShortcutsHelp}
+              onClose={() => setShowShortcutsHelp(false)}
+            />
           </div>
         </div>
       </div>

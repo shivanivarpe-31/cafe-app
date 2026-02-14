@@ -16,9 +16,9 @@ import { useEffect, useRef, useCallback } from 'react';
  */
 export const useSmartPolling = (
   callback,
-  activeInterval = 30000,      // 30 seconds
-  inactiveInterval = 120000,   // 2 minutes
-  inactiveThreshold = 300000   // 5 minutes
+  activeInterval = 5000,       // 5 seconds
+  inactiveInterval = 30000,    // 30 seconds
+  inactiveThreshold = 60000    // 1 minute
 ) => {
   const intervalRef = useRef(null);
   const lastActivityRef = useRef(Date.now());
