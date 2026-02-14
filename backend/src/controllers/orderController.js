@@ -113,9 +113,16 @@ const deductIngredients = async (tx, orderItems, orderId) => {
 // Create new order
 exports.createOrder = async (req, res, next) => {
     try {
-        const { tableId, orderItems } = req.body;
-        if (!tableId || !orderItems || orderItems.length === 0) {
-            throw createValidationError('orderItems', 'Table and order items are required');
+        const { tableId, orderItems, orderType = 'DINE_IN' } = req.body;
+
+        // Validate order items are present
+        if (!orderItems || orderItems.length === 0) {
+            throw createValidationError('orderItems', 'Order items are required');
+        }
+
+        // For dine-in orders, tableId is required
+        if (orderType === 'DINE_IN' && !tableId) {
+            throw createValidationError('tableId', 'Table is required for dine-in orders');
         }
 
         // Calculate totals including modifications
@@ -148,24 +155,31 @@ exports.createOrder = async (req, res, next) => {
                 throw createInsufficientStockError(missingIngredients);
             }
 
-            // Create order
+            // Create order - tableId is optional for takeaway/delivery
+            const orderData = {
+                billNumber,
+                subtotal,
+                tax,
+                total,
+                status: 'PENDING',
+                orderType: orderType,
+                items: {
+                    create: orderItems.map(item => ({
+                        menuItemId: item.menuItemId,
+                        quantity: item.quantity,
+                        price: parseFloat(item.price),
+                        notes: item.notes || null
+                    }))
+                }
+            };
+
+            // Only add tableId for dine-in orders
+            if (orderType === 'DINE_IN' && tableId) {
+                orderData.tableId = parseInt(tableId, 10);
+            }
+
             const newOrder = await tx.order.create({
-                data: {
-                    tableId: parseInt(tableId, 10),
-                    billNumber,
-                    subtotal,
-                    tax,
-                    total,
-                    status: 'PENDING',
-                    items: {
-                        create: orderItems.map(item => ({
-                            menuItemId: item.menuItemId,
-                            quantity: item.quantity,
-                            price: parseFloat(item.price),
-                            notes: item.notes || null
-                        }))
-                    }
-                },
+                data: orderData,
                 include: {
                     table: true,
                     items: {
@@ -198,16 +212,18 @@ exports.createOrder = async (req, res, next) => {
             // NOTE: Ingredients will be deducted when order status changes to PREPARING
             // This prevents stock loss if order creation fails or order is cancelled before cooking starts
 
-            // Update table status
-            await tx.table.update({
-                where: { id: parseInt(tableId, 10) },
-                data: {
-                    status: 'OCCUPIED',
-                    currentBill: total,
-                    orderTime: new Date(),
-                    updatedAt: new Date()
-                }
-            });
+            // Update table status only for dine-in orders
+            if (orderType === 'DINE_IN' && tableId) {
+                await tx.table.update({
+                    where: { id: parseInt(tableId, 10) },
+                    data: {
+                        status: 'OCCUPIED',
+                        currentBill: total,
+                        orderTime: new Date(),
+                        updatedAt: new Date()
+                    }
+                });
+            }
 
             // Fetch complete order with modifications
             const completeOrder = await tx.order.findUnique({

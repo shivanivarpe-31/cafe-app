@@ -7,6 +7,7 @@ import React, {
 } from "react";
 import axios from "axios";
 import jsPDF from "jspdf";
+import html2canvas from "html2canvas";
 import {
   BarChart3,
   AlertTriangle,
@@ -23,7 +24,6 @@ import {
   Smartphone,
   Clock,
   Users,
-  FileText,
   Printer,
 } from "lucide-react";
 import {
@@ -115,12 +115,16 @@ const ReportsPage = () => {
   const [loading, setLoading] = useState(true);
   const [salesTrend, setSalesTrend] = useState([]);
   const [exporting, setExporting] = useState(false);
-  const [exportingCSV, setExportingCSV] = useState(false);
   const [error, setError] = useState(null);
 
   // Abort controller ref for cleanup
   const abortControllerRef = useRef(null);
   const dateChangeTimeoutRef = useRef(null);
+
+  // Chart refs for PDF export
+  const salesChartRef = useRef(null);
+  const ordersChartRef = useRef(null);
+  const categoryChartRef = useRef(null);
 
   // Dynamic labels based on active preset
   const dayLabel = useMemo(() => {
@@ -344,91 +348,12 @@ const ReportsPage = () => {
     fetchAllData();
   };
 
-  // CSV Export
-  const downloadCSVReport = useCallback(async () => {
-    try {
-      setExportingCSV(true);
-
-      // Prepare CSV data
-      const csvRows = [];
-
-      // Header section
-      csvRows.push(["Business Report"]);
-      csvRows.push([`Generated: ${new Date().toLocaleString()}`]);
-      csvRows.push([`Date Range: ${dateRange.from} to ${dateRange.to}`]);
-      csvRows.push([]);
-
-      // Key Metrics
-      csvRows.push(["KEY METRICS"]);
-      csvRows.push(["Metric", "Value"]);
-      csvRows.push(["Today's Sales", `₹${stats.todaySales || 0}`]);
-      csvRows.push(["Orders Today", stats.todayOrders || 0]);
-      csvRows.push(["Items Sold", stats.totalItemsSold || 0]);
-      csvRows.push(["Avg Order Value", `₹${stats.avgOrderValue || 0}`]);
-      csvRows.push(["Low Stock Items", stats.lowStockCount || 0]);
-      csvRows.push([]);
-
-      // Top Selling Items
-      csvRows.push(["TOP SELLING ITEMS"]);
-      csvRows.push(["Rank", "Item Name", "Units Sold", "Revenue"]);
-      (stats.topSellingItems || []).forEach((item, idx) => {
-        csvRows.push([
-          idx + 1,
-          item.name,
-          item.totalSold,
-          `₹${Math.round(item.revenue || 0)}`,
-        ]);
-      });
-      csvRows.push([]);
-
-      // Sales Trend
-      csvRows.push(["SALES TREND"]);
-      csvRows.push(["Date", "Sales", "Orders"]);
-      salesTrend.forEach((day) => {
-        csvRows.push([day.fullDate, `₹${day.sales}`, day.orders]);
-      });
-      csvRows.push([]);
-
-      // Low Stock Items
-      csvRows.push(["LOW STOCK ALERTS"]);
-      csvRows.push(["Item Name", "Quantity", "Category"]);
-      (stats.lowStockItems || []).forEach((item) => {
-        csvRows.push([item.name, item.quantity, item.category || "N/A"]);
-      });
-
-      // Convert to CSV string
-      const csvContent = csvRows
-        .map((row) =>
-          row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","),
-        )
-        .join("\n");
-
-      // Download
-      const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = `sales-report-${Date.now()}.csv`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      showSuccess("CSV report downloaded successfully!");
-    } catch (e) {
-      console.error(e);
-      showError("Error generating CSV report");
-    } finally {
-      setExportingCSV(false);
-    }
-  }, [stats, salesTrend, dateRange]);
-
   // Print function
   const handlePrint = useCallback(() => {
     window.print();
   }, []);
 
-  const downloadPDFReport = () => {
+  const downloadPDFReport = async () => {
     try {
       setExporting(true);
 
@@ -467,7 +392,7 @@ const ReportsPage = () => {
       pdf.setFontSize(11);
       pdf.setFont("helvetica", "bold");
       pdf.text(
-        "Date Range: " + dateRange.from + " to " + dateRange.to,
+        "Report Period: " + dateRange.from + " to " + dateRange.to,
         margin,
         yPosition,
       );
@@ -475,79 +400,162 @@ const ReportsPage = () => {
 
       pdf.setDrawColor(lightGray[0], lightGray[1], lightGray[2]);
       pdf.line(margin, yPosition, pageWidth - margin, yPosition);
-      yPosition += 8;
+      yPosition += 10;
 
       // KEY METRICS
       pdf.setFontSize(13);
       pdf.setFont("helvetica", "bold");
       pdf.text("KEY METRICS", margin, yPosition);
-      yPosition += 8;
+      yPosition += 10;
 
       const metrics = [
         {
-          label: "Today's Sales",
-          value: "₹" + Number(stats.todaySales || 0).toFixed(0),
+          label: dayLabel + " Sales",
+          value: "₹" + Number(stats.todaySales || 0).toLocaleString(),
           note: `${stats.salesGrowth >= 0 ? "+" : ""}${
             stats.salesGrowth
-          }% vs yesterday`,
+          }% ${comparisonLabel}`,
+          positive: stats.salesGrowth >= 0,
         },
         {
-          label: "Orders Today",
+          label:
+            "Orders " + (activePreset === "Yesterday" ? "Yesterday" : "Today"),
           value: String(stats.todayOrders || 0),
           note: `${stats.ordersGrowth >= 0 ? "+" : ""}${
             stats.ordersGrowth
-          }% vs yesterday`,
+          }% ${comparisonLabel}`,
+          positive: stats.ordersGrowth >= 0,
         },
         {
           label: "Items Sold",
           value: String(stats.totalItemsSold || 0),
           note: `${stats.itemsGrowth >= 0 ? "+" : ""}${
             stats.itemsGrowth
-          }% vs yesterday`,
+          }% ${comparisonLabel}`,
+          positive: stats.itemsGrowth >= 0,
         },
         {
           label: "Avg Order Value",
           value: "₹" + Number(stats.avgOrderValue || 0).toFixed(0),
           note: "Per order average",
+          positive: true,
         },
       ];
 
       const metricsPerRow = 2;
       const metricWidth = (pageWidth - 2 * margin - 10) / metricsPerRow;
 
-      pdf.setFontSize(9);
-      pdf.setFont("helvetica", "normal");
-
       metrics.forEach((metric, index) => {
         const row = Math.floor(index / metricsPerRow);
         const col = index % metricsPerRow;
         const xPos = margin + col * (metricWidth + 10);
-        const yPos = yPosition + row * 20;
+        const yPos = yPosition + row * 22;
 
-        pdf.setFillColor(245, 245, 245);
-        pdf.rect(xPos, yPos, metricWidth, 16, "F");
-        pdf.setDrawColor(lightGray[0], lightGray[1], lightGray[2]);
-        pdf.rect(xPos, yPos, metricWidth, 16);
+        pdf.setFillColor(250, 250, 250);
+        pdf.rect(xPos, yPos, metricWidth, 18, "F");
+        pdf.setDrawColor(220, 220, 220);
+        pdf.rect(xPos, yPos, metricWidth, 18);
 
         pdf.setTextColor(100, 100, 100);
         pdf.setFontSize(8);
-        pdf.text(metric.label, xPos + 3, yPos + 5);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(metric.label, xPos + 4, yPos + 5);
 
         pdf.setTextColor(0, 0, 0);
         pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(11);
-        pdf.text(metric.value, xPos + 3, yPos + 11);
+        pdf.setFontSize(12);
+        pdf.text(metric.value, xPos + 4, yPos + 12);
 
         pdf.setFont("helvetica", "normal");
         pdf.setFontSize(7);
-        pdf.setTextColor(34, 197, 94);
-        pdf.text(metric.note, xPos + 3, yPos + 15);
+        if (metric.positive) {
+          pdf.setTextColor(34, 197, 94);
+        } else {
+          pdf.setTextColor(239, 68, 68);
+        }
+        pdf.text(metric.note, xPos + 4, yPos + 16);
       });
 
-      yPosition += 45;
+      yPosition += 50;
+
+      // SALES TREND DATA TABLE
+      if (yPosition > pageHeight - 80) {
+        pdf.addPage();
+        yPosition = 15;
+      }
+
+      pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(13);
+      pdf.text("SALES TREND (Last 7 Days)", margin, yPosition);
+      yPosition += 8;
+
+      // Table headers
+      const trendHeaders = ["Date", "Sales (₹)", "Orders"];
+      const trendColWidths = [60, 55, 35];
+      let x = margin;
+
+      pdf.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
+      pdf.rect(margin, yPosition - 5, pageWidth - 2 * margin, 8, "F");
+      pdf.setTextColor(255, 255, 255);
+      pdf.setFontSize(9);
+      pdf.setFont("helvetica", "bold");
+
+      trendHeaders.forEach((h, i) => {
+        pdf.text(h, x + 3, yPosition);
+        x += trendColWidths[i];
+      });
+
+      yPosition += 7;
+      pdf.setFont("helvetica", "normal");
+      pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
+      pdf.setFontSize(9);
+
+      if (salesTrend && salesTrend.length > 0) {
+        salesTrend.forEach((day, idx) => {
+          if (yPosition > pageHeight - 20) {
+            pdf.addPage();
+            yPosition = 15;
+          }
+
+          // Alternate row colors
+          if (idx % 2 === 0) {
+            pdf.setFillColor(248, 248, 248);
+            pdf.rect(margin, yPosition - 4, pageWidth - 2 * margin, 7, "F");
+          }
+
+          x = margin;
+          pdf.text(String(day.fullDate || ""), x + 3, yPosition);
+          x += trendColWidths[0];
+          pdf.text(String(day.sales?.toLocaleString() || 0), x + 3, yPosition);
+          x += trendColWidths[1];
+          pdf.text(String(day.orders || 0), x + 3, yPosition);
+          yPosition += 7;
+        });
+
+        // Total row
+        yPosition += 2;
+        pdf.setFillColor(240, 240, 240);
+        pdf.rect(margin, yPosition - 4, pageWidth - 2 * margin, 8, "F");
+        pdf.setFont("helvetica", "bold");
+        x = margin;
+        pdf.text("TOTAL", x + 3, yPosition);
+        x += trendColWidths[0];
+        pdf.text("₹" + totalSalesForPeriod.toLocaleString(), x + 3, yPosition);
+        x += trendColWidths[1];
+        pdf.text(String(totalOrdersForPeriod), x + 3, yPosition);
+        yPosition += 12;
+      } else {
+        pdf.text(
+          "No sales data available for the selected period.",
+          margin,
+          yPosition,
+        );
+        yPosition += 10;
+      }
 
       // TOP SELLING ITEMS
-      if (yPosition > pageHeight - 60) {
+      if (yPosition > pageHeight - 70) {
         pdf.addPage();
         yPosition = 15;
       }
@@ -559,46 +567,109 @@ const ReportsPage = () => {
       yPosition += 8;
 
       const headers = ["#", "Item Name", "Units Sold", "Revenue (₹)"];
-      const colWidths = [10, 70, 25, 35];
-      let x = margin;
+      const colWidths = [12, 75, 30, 40];
+      x = margin;
 
       pdf.setFillColor(primaryColor[0], primaryColor[1], primaryColor[2]);
-      pdf.rect(margin, yPosition - 5, pageWidth - 2 * margin, 7, "F");
+      pdf.rect(margin, yPosition - 5, pageWidth - 2 * margin, 8, "F");
       pdf.setTextColor(255, 255, 255);
-      pdf.setFontSize(8);
+      pdf.setFontSize(9);
       pdf.setFont("helvetica", "bold");
 
       headers.forEach((h, i) => {
-        pdf.text(h, x + 2, yPosition);
+        pdf.text(h, x + 3, yPosition);
         x += colWidths[i];
       });
 
-      yPosition += 6;
+      yPosition += 7;
       pdf.setFont("helvetica", "normal");
       pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
-      pdf.setFontSize(8);
+      pdf.setFontSize(9);
 
       if (stats.topSellingItems && stats.topSellingItems.length > 0) {
-        stats.topSellingItems.slice(0, 5).forEach((item, idx) => {
+        stats.topSellingItems.slice(0, 10).forEach((item, idx) => {
           if (yPosition > pageHeight - 20) {
             pdf.addPage();
             yPosition = 15;
           }
 
+          if (idx % 2 === 0) {
+            pdf.setFillColor(248, 248, 248);
+            pdf.rect(margin, yPosition - 4, pageWidth - 2 * margin, 7, "F");
+          }
+
           x = margin;
-          pdf.text(String(idx + 1), x + 2, yPosition);
+          pdf.text(String(idx + 1), x + 3, yPosition);
           x += colWidths[0];
-          pdf.text(String(item.name || "").slice(0, 30), x + 2, yPosition);
+          pdf.text(String(item.name || "").slice(0, 35), x + 3, yPosition);
           x += colWidths[1];
-          pdf.text(String(item.totalSold || 0), x + 2, yPosition);
+          pdf.text(String(item.totalSold || 0), x + 3, yPosition);
           x += colWidths[2];
-          pdf.text(String(Math.round(item.revenue || 0)), x + 2, yPosition);
-          yPosition += 5;
+          pdf.text(
+            String(Math.round(item.revenue || 0).toLocaleString()),
+            x + 3,
+            yPosition,
+          );
+          yPosition += 7;
         });
       } else {
         pdf.text("No sales data available.", margin, yPosition);
-        yPosition += 5;
+        yPosition += 7;
       }
+
+      yPosition += 10;
+
+      // PAYMENT BREAKDOWN
+      if (yPosition > pageHeight - 50) {
+        pdf.addPage();
+        yPosition = 15;
+      }
+
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(13);
+      pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
+      pdf.text("PAYMENT BREAKDOWN", margin, yPosition);
+      yPosition += 10;
+
+      const paymentData = [
+        {
+          method: "Cash",
+          count: stats.paymentBreakdown?.cash || 0,
+          color: [34, 197, 94],
+        },
+        {
+          method: "Card",
+          count: stats.paymentBreakdown?.card || 0,
+          color: [59, 130, 246],
+        },
+        {
+          method: "UPI",
+          count: stats.paymentBreakdown?.upi || 0,
+          color: [139, 92, 246],
+        },
+      ];
+
+      const totalPayments = paymentData.reduce((sum, p) => sum + p.count, 0);
+
+      paymentData.forEach((payment, idx) => {
+        const percentage =
+          totalPayments > 0
+            ? ((payment.count / totalPayments) * 100).toFixed(1)
+            : 0;
+
+        pdf.setFillColor(payment.color[0], payment.color[1], payment.color[2]);
+        pdf.circle(margin + 3, yPosition - 1, 2.5, "F");
+
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(9);
+        pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
+        pdf.text(
+          `${payment.method}: ${payment.count} orders (${percentage}%)`,
+          margin + 10,
+          yPosition,
+        );
+        yPosition += 7;
+      });
 
       yPosition += 8;
 
@@ -615,7 +686,7 @@ const ReportsPage = () => {
       yPosition += 8;
 
       pdf.setFont("helvetica", "normal");
-      pdf.setFontSize(8);
+      pdf.setFontSize(9);
 
       if (stats.lowStockItems && stats.lowStockItems.length > 0) {
         stats.lowStockItems.forEach((item) => {
@@ -626,41 +697,164 @@ const ReportsPage = () => {
 
           pdf.setDrawColor(250, 204, 21);
           pdf.setFillColor(255, 251, 235);
-          pdf.rect(margin, yPosition - 4, pageWidth - 2 * margin, 9, "FD");
+          pdf.rect(margin, yPosition - 4, pageWidth - 2 * margin, 10, "FD");
 
           pdf.setTextColor(180, 83, 9);
           pdf.setFont("helvetica", "bold");
-          pdf.text(String(item.name || ""), margin + 3, yPosition);
+          pdf.text(String(item.name || ""), margin + 4, yPosition);
 
           pdf.setTextColor(120, 53, 15);
           pdf.setFont("helvetica", "normal");
-          pdf.setFontSize(7);
+          pdf.setFontSize(8);
           pdf.text(
-            "Only " + String(item.quantity || 0) + " units left.",
-            margin + 3,
-            yPosition + 4,
+            "Stock: " + String(item.quantity || 0) + " units remaining",
+            margin + 4,
+            yPosition + 5,
           );
 
-          yPosition += 11;
+          yPosition += 13;
         });
       } else {
         pdf.setTextColor(22, 163, 74);
         pdf.setFont("helvetica", "bold");
-        pdf.setFontSize(9);
+        pdf.setFontSize(10);
         pdf.text("All items are well stocked.", margin, yPosition);
-        yPosition += 6;
+        yPosition += 8;
       }
 
-      // FOOTER
-      pdf.setFontSize(7);
-      pdf.setTextColor(148, 163, 184);
-      pdf.text(
-        "Auto-generated report from Cafe POS Pro. For detailed analytics, use the dashboard.",
-        margin,
-        pageHeight - 10,
-      );
+      // CAPTURE CHARTS AS IMAGES
+      // Add new page for charts
+      pdf.addPage();
+      yPosition = 15;
 
-      pdf.save("sales-report-" + Date.now() + ".pdf");
+      pdf.setFont("helvetica", "bold");
+      pdf.setFontSize(14);
+      pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
+      pdf.text("VISUAL ANALYTICS", margin, yPosition);
+      yPosition += 10;
+
+      // Capture Sales Chart
+      if (salesChartRef.current) {
+        try {
+          const salesCanvas = await html2canvas(salesChartRef.current, {
+            scale: 2,
+            backgroundColor: "#ffffff",
+            logging: false,
+          });
+          const salesImgData = salesCanvas.toDataURL("image/png");
+          const imgWidth = pageWidth - 2 * margin;
+          const imgHeight = (salesCanvas.height * imgWidth) / salesCanvas.width;
+
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(11);
+          pdf.text("Sales Trend", margin, yPosition);
+          yPosition += 5;
+
+          pdf.addImage(
+            salesImgData,
+            "PNG",
+            margin,
+            yPosition,
+            imgWidth,
+            Math.min(imgHeight, 70),
+          );
+          yPosition += Math.min(imgHeight, 70) + 15;
+        } catch (e) {
+          console.error("Error capturing sales chart:", e);
+        }
+      }
+
+      // Capture Orders Chart
+      if (ordersChartRef.current && yPosition < pageHeight - 80) {
+        try {
+          const ordersCanvas = await html2canvas(ordersChartRef.current, {
+            scale: 2,
+            backgroundColor: "#ffffff",
+            logging: false,
+          });
+          const ordersImgData = ordersCanvas.toDataURL("image/png");
+          const imgWidth = pageWidth - 2 * margin;
+          const imgHeight =
+            (ordersCanvas.height * imgWidth) / ordersCanvas.width;
+
+          if (yPosition + imgHeight > pageHeight - 20) {
+            pdf.addPage();
+            yPosition = 15;
+          }
+
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(11);
+          pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
+          pdf.text("Order Volume", margin, yPosition);
+          yPosition += 5;
+
+          pdf.addImage(
+            ordersImgData,
+            "PNG",
+            margin,
+            yPosition,
+            imgWidth,
+            Math.min(imgHeight, 70),
+          );
+          yPosition += Math.min(imgHeight, 70) + 15;
+        } catch (e) {
+          console.error("Error capturing orders chart:", e);
+        }
+      }
+
+      // Capture Category Chart
+      if (categoryChartRef.current) {
+        try {
+          if (yPosition + 80 > pageHeight - 20) {
+            pdf.addPage();
+            yPosition = 15;
+          }
+
+          const categoryCanvas = await html2canvas(categoryChartRef.current, {
+            scale: 2,
+            backgroundColor: "#ffffff",
+            logging: false,
+          });
+          const categoryImgData = categoryCanvas.toDataURL("image/png");
+          const imgWidth = (pageWidth - 2 * margin) / 2;
+          const imgHeight =
+            (categoryCanvas.height * imgWidth) / categoryCanvas.width;
+
+          pdf.setFont("helvetica", "bold");
+          pdf.setFontSize(11);
+          pdf.setTextColor(textColor[0], textColor[1], textColor[2]);
+          pdf.text("Sales by Category", margin, yPosition);
+          yPosition += 5;
+
+          pdf.addImage(
+            categoryImgData,
+            "PNG",
+            margin,
+            yPosition,
+            imgWidth,
+            Math.min(imgHeight, 70),
+          );
+        } catch (e) {
+          console.error("Error capturing category chart:", e);
+        }
+      }
+
+      // FOOTER on last page
+      const totalPages = pdf.internal.getNumberOfPages();
+      for (let i = 1; i <= totalPages; i++) {
+        pdf.setPage(i);
+        pdf.setFontSize(7);
+        pdf.setTextColor(148, 163, 184);
+        pdf.text(
+          `Cafe POS Pro - Business Report | Page ${i} of ${totalPages}`,
+          margin,
+          pageHeight - 8,
+        );
+      }
+
+      pdf.save(
+        "sales-report-" + dateRange.from + "-to-" + dateRange.to + ".pdf",
+      );
       showSuccess("PDF report downloaded successfully!");
     } catch (e) {
       console.error(e);
@@ -782,15 +976,6 @@ const ReportsPage = () => {
                 >
                   <Printer className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
                   <span className="hidden sm:inline">Print</span>
-                </button>
-                <button
-                  onClick={downloadCSVReport}
-                  disabled={exportingCSV}
-                  className="flex-1 sm:flex-initial px-3 sm:px-4 py-2 sm:py-2.5 bg-green-100 hover:bg-green-200 text-green-700 rounded-xl font-medium transition-all flex items-center justify-center space-x-1.5 sm:space-x-2 disabled:opacity-50 text-xs sm:text-sm"
-                  title="Export as CSV"
-                >
-                  <FileText className="w-3.5 h-3.5 sm:w-4 sm:h-4" />
-                  <span>{exportingCSV ? "..." : "CSV"}</span>
                 </button>
                 <button
                   onClick={downloadPDFReport}
@@ -1126,7 +1311,10 @@ const ReportsPage = () => {
             {/* Charts Section */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Sales Trend */}
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+              <div
+                ref={salesChartRef}
+                className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"
+              >
                 <h2 className="text-lg font-bold text-gray-900 mb-6 flex items-center">
                   <TrendingUp className="w-5 h-5 mr-2 text-red-500" />
                   Sales Trend
@@ -1170,7 +1358,10 @@ const ReportsPage = () => {
               </div>
 
               {/* Orders Trend */}
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+              <div
+                ref={ordersChartRef}
+                className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"
+              >
                 <h2 className="text-lg font-bold text-gray-900 mb-6 flex items-center">
                   <BarChart3 className="w-5 h-5 mr-2 text-blue-500" />
                   Order Volume
@@ -1210,7 +1401,10 @@ const ReportsPage = () => {
             {/* Category Sales & Peak Hours */}
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
               {/* Sales by Category */}
-              <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
+              <div
+                ref={categoryChartRef}
+                className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6"
+              >
                 <h2 className="text-lg font-bold text-gray-900 mb-6">
                   Sales by Category
                 </h2>
