@@ -85,6 +85,13 @@ const createPlatformOrder = async (platformData, platform) => {
             }
         });
 
+        if (ingredient.currentStock < totalRequired) {
+            throw new Error(
+                `Insufficient stock for ${ingredient.ingredient.name}`
+            );
+        }
+
+
         // Deduct ingredients for each item
         for (const item of items) {
             const recipe = await tx.menuItemIngredient.findMany({

@@ -41,6 +41,17 @@ app.use('/api/modifications', require('./src/routes/modifications'));
 app.use('/api/delivery', require('./src/routes/delivery'));
 app.use('/api/payment', require('./src/routes/payment'));
 app.use('/api/kitchen', require('./src/routes/kitchen'));
+app.use('/webhook', express.json({
+    verify: (req, res, buf) => {
+        req.rawBody = buf.toString();
+    }
+}));
+
+app.use('/delivery/webhook', express.json({
+    verify: (req, res, buf) => {
+        req.rawBody = buf.toString();
+    }
+}));
 
 app.use(errorHandler);
 

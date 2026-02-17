@@ -1,86 +1,68 @@
-/**
- * Zomato Webhook Signature Verification
- * Verifies that webhooks actually come from Zomato
- */
+exports.zomatoWebhook = async (req, res) => {
+  const { event_type, order } = req.body;
 
-const crypto = require('crypto');
-
-/**
- * Verify Zomato webhook signature
- * @param {string} signature - Signature from request header
- * @param {object} body - Request body
- * @param {string} secret - Webhook secret from environment
- * @returns {boolean} True if signature is valid
- */
-function verifyZomatoSignature(signature, body, secret = null) {
   try {
-    const webhookSecret = secret || process.env.ZOMATO_WEBHOOK_SECRET;
-
-    if (!webhookSecret) {
-      console.warn('[Zomato] No webhook secret configured, skipping verification');
-      return true; // Allow in development without secret
-    }
-
-    if (!signature) {
-      console.error('[Zomato] No signature provided in webhook');
-      return false;
-    }
-
-    // Zomato uses HMAC-SHA256
-    const expectedSignature = crypto
-      .createHmac('sha256', webhookSecret)
-      .update(JSON.stringify(body))
-      .digest('hex');
-
-    const isValid = expectedSignature === signature;
+    // 1️⃣ Verify Signature
+    const isValid = verifyZomatoSignature(
+      req,
+      process.env.ZOMATO_WEBHOOK_SECRET
+    );
 
     if (!isValid) {
-      console.error('[Zomato] Webhook signature verification failed');
-      console.error(`Expected: ${expectedSignature}`);
-      console.error(`Received: ${signature}`);
+      return res.status(401).json({ success: false, message: 'Invalid signature' });
     }
 
-    return isValid;
+    // 2️⃣ Idempotency Check
+    const existingOrder = await prisma.deliveryInfo.findFirst({
+      where: {
+        platform: 'ZOMATO',
+        platformOrderId: order.id
+      }
+    });
+
+    if (existingOrder) {
+      return res.status(200).json({ success: true, message: 'Duplicate ignored' });
+    }
+
+    // 3️⃣ Log webhook received
+    await logIntegrationEvent(
+      'ZOMATO',
+      event_type,
+      'INBOUND',
+      '/webhook/zomato',
+      req.body
+    );
+
+    // 4️⃣ Process event
+    switch (event_type) {
+      case 'order_placed':
+        await createPlatformOrder(order, 'ZOMATO');
+        break;
+
+      case 'order_cancelled':
+        await updatePlatformOrderStatus(order.id, 'CANCELLED', 'ZOMATO');
+        break;
+
+      case 'order_picked_up':
+        await updatePlatformOrderStatus(order.id, 'OUT_FOR_DELIVERY', 'ZOMATO');
+        break;
+    }
+
+    return res.status(200).json({ success: true });
+
   } catch (error) {
-    console.error('[Zomato] Error verifying webhook signature:', error);
-    return false;
+
+    await logIntegrationEvent(
+      'ZOMATO',
+      'ORDER_FAILED',
+      'INBOUND',
+      '/webhook/zomato',
+      req.body,
+      { error: error.message },
+      500,
+      false
+    );
+
+    return res.status(200).json({ success: false });
   }
-}
-
-/**
- * Generate a signature for testing
- * @param {object} body - Request body
- * @returns {string} Generated signature
- */
-function generateZomatoSignature(body) {
-  const secret = process.env.ZOMATO_WEBHOOK_SECRET || 'test_webhook_secret';
-
-  return crypto
-    .createHmac('sha256', secret)
-    .update(JSON.stringify(body))
-    .digest('hex');
-}
-
-/**
- * Extract and verify signature from Express request
- * @param {object} req - Express request object
- * @returns {object} Verification result { valid, signature, error }
- */
-function verifyZomatoWebhook(req) {
-  const signature = req.headers['x-zomato-signature'];
-  const body = req.body;
-
-  const valid = verifyZomatoSignature(signature, body);
-
-  return {
-    valid,
-    signature,
-    error: valid ? null : 'Invalid or missing signature',
-  };
-}
-
-module.exports = {
-  verifyZomatoSignature,
-  generateZomatoSignature,
-  verifyZomatoWebhook,
 };
