@@ -13,7 +13,7 @@ import {
 import SplitPaymentInterface from "./SplitPaymentInterface";
 
 const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
-  const [paymentMode, setPaymentMode] = useState("RAZORPAY");
+  const [paymentMode, setPaymentMode] = useState("CASH");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showSplitInterface, setShowSplitInterface] = useState(false);
@@ -35,7 +35,7 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
       if (isPlatformDelivery) {
         setPaymentMode("ALREADY_PAID");
       } else {
-        setPaymentMode("RAZORPAY");
+        setPaymentMode("CASH");
       }
     }
   }, [order, isOpen]);
@@ -60,16 +60,16 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
   // Available payment methods for each order type
   const availablePaymentMethods = {
     // DINE_IN: All methods available
-    DINE_IN: ["RAZORPAY", "CASH", "CARD", "UPI", "SPLIT", "PAY_LATER"],
+    DINE_IN: ["CASH", "CARD", "UPI", "SPLIT", "PAY_LATER"],
 
     // TAKEAWAY: All except Pay Later (needs immediate payment)
-    TAKEAWAY: ["RAZORPAY", "CASH", "CARD", "UPI", "SPLIT"],
+    TAKEAWAY: ["CASH", "CARD", "UPI", "SPLIT"],
 
     // DELIVERY - Platform orders: Only "Already Paid" through platform
     PLATFORM_DELIVERY: ["ALREADY_PAID"],
 
-    // DELIVERY - Direct: Prefer online, allow COD
-    DIRECT_DELIVERY: ["RAZORPAY", "CASH", "CARD", "UPI"],
+    // DELIVERY - Direct: Cash on delivery only
+    DIRECT_DELIVERY: ["CASH", "CARD", "UPI"],
   };
 
   // Get current available methods
@@ -88,107 +88,8 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
   }
 
   // Check if a payment method is available
-  const isMethodAvailable = (method) => currentAvailableMethods.includes(method);
-
-  // Load Razorpay script dynamically
-  const loadRazorpayScript = () => {
-    return new Promise((resolve) => {
-      if (window.Razorpay) {
-        resolve(true);
-        return;
-      }
-      const script = document.createElement("script");
-      script.src = "https://checkout.razorpay.com/v1/checkout.js";
-      script.onload = () => resolve(true);
-      script.onerror = () => resolve(false);
-      document.body.appendChild(script);
-    });
-  };
-
-  // Handle Razorpay payment
-  const handleRazorpayPayment = async () => {
-    setLoading(true);
-    setError("");
-
-    try {
-      // Load Razorpay script
-      const scriptLoaded = await loadRazorpayScript();
-      if (!scriptLoaded) {
-        throw new Error("Failed to load Razorpay SDK");
-      }
-
-      // Create order on backend
-      const { data } = await axios.post("/api/payment/create-order", {
-        orderId: order.id,
-        amount: amount,
-      });
-
-      // Configure Razorpay options
-      const options = {
-        key: data.keyId,
-        amount: data.amount,
-        currency: data.currency,
-        name: "Cafe POS",
-        description: `Bill #${order.billNumber}`,
-        order_id: data.razorpayOrderId,
-        handler: async function (response) {
-          try {
-            // Verify payment on backend
-            const verifyRes = await axios.post("/api/payment/verify", {
-              razorpay_order_id: response.razorpay_order_id,
-              razorpay_payment_id: response.razorpay_payment_id,
-              razorpay_signature: response.razorpay_signature,
-              orderId: order.id,
-            });
-
-            if (verifyRes.data.success) {
-              onPaymentSuccess({
-                ...order,
-                status: "PAID",
-                paymentMode: "RAZORPAY",
-                paymentId: response.razorpay_payment_id,
-              });
-            }
-          } catch (err) {
-            setError("Payment verification failed");
-            console.error("Verification error:", err);
-          }
-        },
-        prefill: {
-          name:
-            order.deliveryInfo?.customerName || order.table?.customerName || "",
-          contact:
-            order.deliveryInfo?.customerPhone ||
-            order.table?.customerPhone ||
-            "",
-          email: order.deliveryInfo?.customerEmail || "",
-        },
-        notes: {
-          billNumber: order.billNumber,
-          orderType: order.orderType,
-        },
-        theme: {
-          color: "#EF4444", // Red theme matching your UI
-        },
-        modal: {
-          ondismiss: function () {
-            setLoading(false);
-          },
-        },
-      };
-
-      // Open Razorpay checkout
-      const razorpay = new window.Razorpay(options);
-      razorpay.on("payment.failed", function (response) {
-        setError(`Payment failed: ${response.error.description}`);
-        setLoading(false);
-      });
-      razorpay.open();
-    } catch (err) {
-      setError(err.response?.data?.error || err.message || "Payment failed");
-      setLoading(false);
-    }
-  };
+  const isMethodAvailable = (method) =>
+    currentAvailableMethods.includes(method);
 
   // Handle cash/card payment (manual)
   const handleManualPayment = async (mode) => {
@@ -275,9 +176,7 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
   };
 
   const handlePayment = () => {
-    if (paymentMode === "RAZORPAY") {
-      handleRazorpayPayment();
-    } else if (paymentMode === "PAY_LATER") {
+    if (paymentMode === "PAY_LATER") {
       handlePayLater();
     } else if (paymentMode === "ALREADY_PAID") {
       // For platform orders (Zomato/Swiggy), mark as paid through platform
@@ -292,7 +191,9 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
       <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
         {/* Header */}
         <div className="flex items-center justify-between mb-4 sm:mb-6">
-          <h3 className="text-lg sm:text-xl font-bold text-gray-900">Complete Payment</h3>
+          <h3 className="text-lg sm:text-xl font-bold text-gray-900">
+            Complete Payment
+          </h3>
           <button
             onClick={onClose}
             className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
@@ -352,12 +253,13 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
             <p className="text-sm text-gray-700">
               {isDirectDelivery && (
                 <span>
-                  💡 <strong>Direct Delivery:</strong> Online payment recommended, cash on delivery available
+                  <strong>Direct Delivery:</strong> Cash on delivery or counter
+                  payment available
                 </span>
               )}
               {isTakeaway && (
                 <span>
-                  💡 <strong>Takeaway Order:</strong> Immediate payment required
+                  <strong>Takeaway Order:</strong> Immediate payment required
                 </span>
               )}
             </p>
@@ -385,34 +287,6 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
                     Mark order as paid to continue
                   </span>
                 </div>
-              </button>
-            )}
-
-            {/* Online Payment (Razorpay) */}
-            {isMethodAvailable("RAZORPAY") && (
-              <button
-                onClick={() => setPaymentMode("RAZORPAY")}
-                className={`p-3 sm:p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-1 sm:space-y-2 min-h-[100px] sm:min-h-[120px] active:scale-95 ${
-                  paymentMode === "RAZORPAY"
-                    ? "border-red-500 bg-red-50"
-                    : "border-gray-200 hover:border-gray-300"
-                }`}
-              >
-                <CreditCard
-                  className={`w-5 h-5 sm:w-6 sm:h-6 ${
-                    paymentMode === "RAZORPAY" ? "text-red-600" : "text-gray-600"
-                  }`}
-                />
-                <span
-                  className={`text-xs sm:text-sm font-medium text-center ${
-                    paymentMode === "RAZORPAY" ? "text-red-600" : "text-gray-700"
-                  }`}
-                >
-                  Online Payment
-                </span>
-                <span className="text-xs text-gray-500">
-                  UPI / Card / Netbanking
-                </span>
               </button>
             )}
 
@@ -509,7 +383,9 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
                 <span className="text-sm font-medium text-orange-600">
                   Split Payment
                 </span>
-                <span className="text-xs text-gray-500">Pay with 2 methods</span>
+                <span className="text-xs text-gray-500">
+                  Pay with 2 methods
+                </span>
               </button>
             )}
 
@@ -613,9 +489,7 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
               <>
                 <CheckCircle className="w-5 h-5" />
                 <span>
-                  {paymentMode === "RAZORPAY"
-                    ? `Pay ₹${amount.toFixed(0)}`
-                    : paymentMode === "ALREADY_PAID"
+                  {paymentMode === "ALREADY_PAID"
                     ? "Confirm Payment Received"
                     : "Mark as Paid"}
                 </span>
@@ -630,16 +504,6 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
             Cancel
           </button>
         </div>
-
-        {/* Razorpay Badge */}
-        {paymentMode === "RAZORPAY" && (
-          <div className="mt-4 text-center">
-            <p className="text-xs text-gray-500">
-              Secured by{" "}
-              <span className="font-semibold text-blue-600">Razorpay</span>
-            </p>
-          </div>
-        )}
       </div>
     </div>
   );

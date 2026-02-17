@@ -1,5 +1,3 @@
-const Razorpay = require('razorpay');
-const crypto = require('crypto');
 const { prisma } = require('../prisma');
 const {
     createNotFoundError,
@@ -9,226 +7,6 @@ const {
     AppError,
     ERROR_CODES,
 } = require('../utils/errors');
-
-// Initialize Razorpay instance
-const razorpay = new Razorpay({
-    key_id: process.env.RAZORPAY_KEY_ID,
-    key_secret: process.env.RAZORPAY_KEY_SECRET
-});
-
-// Create Razorpay order
-exports.createPaymentOrder = async (req, res, next) => {
-    try {
-        const { orderId, amount } = req.body;
-
-        if (!orderId || !amount) {
-            return res.status(400).json({ error: 'Order ID and amount are required' });
-        }
-
-        // Verify the order exists
-        const order = await prisma.order.findUnique({
-            where: { id: parseInt(orderId, 10) },
-            include: {
-                table: true,
-                deliveryInfo: true
-            }
-        });
-
-        if (!order) {
-            return res.status(404).json({ error: 'Order not found' });
-        }
-
-        if (order.status === 'PAID') {
-            return res.status(400).json({ error: 'Order already paid' });
-        }
-
-        // Validate payment amount matches order total (with small tolerance for rounding)
-        const orderTotal = parseFloat(order.total);
-        const paymentAmount = parseFloat(amount);
-        const tolerance = 0.01; // Allow 1 paisa difference for rounding
-
-        if (Math.abs(paymentAmount - orderTotal) > tolerance) {
-            return res.status(400).json({
-                error: 'Payment amount does not match order total',
-                details: {
-                    orderTotal: orderTotal.toFixed(2),
-                    paymentAmount: paymentAmount.toFixed(2),
-                    difference: Math.abs(paymentAmount - orderTotal).toFixed(2)
-                }
-            });
-        }
-
-        // Validate amount is positive
-        if (paymentAmount <= 0) {
-            return res.status(400).json({
-                error: 'Payment amount must be greater than zero'
-            });
-        }
-
-        // Create Razorpay order
-        const razorpayOrder = await razorpay.orders.create({
-            amount: Math.round(amount * 100), // Razorpay expects amount in paise
-            currency: 'INR',
-            receipt: order.billNumber,
-            notes: {
-                orderId: order.id.toString(),
-                billNumber: order.billNumber,
-                tableId: order.tableId?.toString() || 'delivery',
-                orderType: order.orderType
-            }
-        });
-
-        // Create pending payment record in database
-        await prisma.payment.create({
-            data: {
-                orderId: order.id,
-                amount: parseFloat(amount),
-                currency: 'INR',
-                paymentMode: 'RAZORPAY',
-                status: 'PENDING',
-                razorpayOrderId: razorpayOrder.id,
-                notes: JSON.stringify({
-                    billNumber: order.billNumber,
-                    orderType: order.orderType
-                })
-            }
-        });
-
-        res.json({
-            success: true,
-            razorpayOrderId: razorpayOrder.id,
-            amount: razorpayOrder.amount,
-            currency: razorpayOrder.currency,
-            billNumber: order.billNumber,
-            keyId: process.env.RAZORPAY_KEY_ID
-        });
-
-    } catch (error) {
-        console.error('Create payment order error:', error);
-        next(error);
-    }
-};
-
-// Verify payment and update order
-exports.verifyPayment = async (req, res, next) => {
-    try {
-        const {
-            razorpay_order_id,
-            razorpay_payment_id,
-            razorpay_signature,
-            orderId
-        } = req.body;
-
-        if (!razorpay_order_id || !razorpay_payment_id || !razorpay_signature || !orderId) {
-            return res.status(400).json({ error: 'Missing payment verification data' });
-        }
-
-        // Verify signature
-        const body = razorpay_order_id + '|' + razorpay_payment_id;
-        const expectedSignature = crypto
-            .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET)
-            .update(body.toString())
-            .digest('hex');
-
-        const isAuthentic = expectedSignature === razorpay_signature;
-
-        // Find the payment record
-        const paymentRecord = await prisma.payment.findUnique({
-            where: { razorpayOrderId: razorpay_order_id }
-        });
-
-        if (!isAuthentic) {
-            // Update payment record with failure
-            if (paymentRecord) {
-                await prisma.payment.update({
-                    where: { id: paymentRecord.id },
-                    data: {
-                        status: 'FAILED',
-                        errorMessage: 'Invalid signature - verification failed'
-                    }
-                });
-            }
-
-            return res.status(400).json({
-                success: false,
-                error: 'Payment verification failed - invalid signature'
-            });
-        }
-
-        // Use transaction to ensure all updates succeed or fail together
-        const result = await prisma.$transaction(async (tx) => {
-            // Update payment record with success
-            await tx.payment.update({
-                where: { razorpayOrderId: razorpay_order_id },
-                data: {
-                    status: 'SUCCESS',
-                    razorpayPaymentId: razorpay_payment_id,
-                    razorpaySignature: razorpay_signature
-                }
-            });
-
-            // Update order status to PAID
-            const order = await tx.order.update({
-                where: { id: parseInt(orderId, 10) },
-                data: {
-                    status: 'PAID',
-                    paymentMode: 'RAZORPAY',
-                    paidAt: new Date()
-                },
-                include: {
-                    table: true,
-                    deliveryInfo: true
-                }
-            });
-
-            // If dine-in order, update table status
-            if (order.tableId) {
-                const activeOrdersOnTable = await tx.order.count({
-                    where: {
-                        tableId: order.tableId,
-                        status: { in: ['PENDING', 'PREPARING', 'SERVED'] }
-                    }
-                });
-
-                if (activeOrdersOnTable === 0) {
-                    await tx.table.update({
-                        where: { id: order.tableId },
-                        data: {
-                            status: 'AVAILABLE',
-                            currentBill: 0,
-                            orderTime: null,
-                            customerName: null,
-                            customerPhone: null,
-                            reservedFrom: null,
-                            reservedUntil: null
-                        }
-                    });
-                }
-            }
-
-            // If delivery order, update delivery status
-            if (order.deliveryInfo) {
-                await tx.deliveryInfo.update({
-                    where: { orderId: order.id },
-                    data: { deliveryStatus: 'DELIVERED' }
-                });
-            }
-
-            return order;
-        });
-
-        res.json({
-            success: true,
-            message: 'Payment verified successfully',
-            order: result,
-            paymentId: razorpay_payment_id
-        });
-
-    } catch (error) {
-        console.error('Verify payment error:', error);
-        next(error);
-    }
-};
 
 // Record manual payment (Cash, Card, UPI)
 exports.recordManualPayment = async (req, res, next) => {
@@ -291,21 +69,10 @@ exports.getPaymentDetails = async (req, res, next) => {
     try {
         const { paymentId } = req.params;
 
-        // Try to get from Razorpay
-        let razorpayPayment = null;
-        try {
-            razorpayPayment = await razorpay.payments.fetch(paymentId);
-        } catch (err) {
-            // Not a Razorpay payment ID, check our database
-        }
-
         // Get from our database
         const dbPayment = await prisma.payment.findFirst({
             where: {
-                OR: [
-                    { razorpayPaymentId: paymentId },
-                    { id: parseInt(paymentId, 10) || 0 }
-                ]
+                id: parseInt(paymentId, 10) || 0
             },
             include: {
                 order: {
@@ -323,8 +90,7 @@ exports.getPaymentDetails = async (req, res, next) => {
 
         res.json({
             success: true,
-            payment: dbPayment,
-            razorpayPayment
+            payment: dbPayment
         });
 
     } catch (error) {
@@ -419,7 +185,7 @@ exports.getPaymentByOrder = async (req, res, next) => {
     }
 };
 
-// Refund payment
+// Refund payment (manual refund recording only - no online payment gateway)
 exports.refundPayment = async (req, res, next) => {
     try {
         const { paymentId, amount, orderId, reason } = req.body;
@@ -430,36 +196,25 @@ exports.refundPayment = async (req, res, next) => {
 
         // Find the payment record
         const paymentRecord = await prisma.payment.findFirst({
-            where: { razorpayPaymentId: paymentId }
+            where: { id: parseInt(paymentId, 10) }
         });
 
         if (!paymentRecord) {
             return res.status(404).json({ error: 'Payment record not found' });
         }
 
-        // Process refund with Razorpay (external API - cannot be rolled back)
-        const refund = await razorpay.payments.refund(paymentId, {
-            amount: amount ? Math.round(amount * 100) : undefined,
-            speed: 'normal',
-            notes: {
-                orderId: orderId?.toString(),
-                reason: reason || 'Customer requested refund'
-            }
-        });
-
-        // Update database records in transaction (if Razorpay succeeds, all DB updates must succeed together)
+        // Update database records in transaction
         await prisma.$transaction(async (tx) => {
             // Update payment record
             await tx.payment.update({
                 where: { id: paymentRecord.id },
                 data: {
                     status: 'REFUNDED',
-                    refundId: refund.id,
-                    refundAmount: parseFloat(refund.amount) / 100,
+                    refundAmount: amount ? parseFloat(amount) : paymentRecord.amount,
                     refundedAt: new Date(),
                     notes: JSON.stringify({
                         ...JSON.parse(paymentRecord.notes || '{}'),
-                        refundReason: reason
+                        refundReason: reason || 'Manual refund'
                     })
                 }
             });
@@ -478,8 +233,7 @@ exports.refundPayment = async (req, res, next) => {
 
         res.json({
             success: true,
-            refund,
-            message: 'Refund processed successfully'
+            message: 'Refund recorded successfully'
         });
 
     } catch (error) {

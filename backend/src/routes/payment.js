@@ -5,8 +5,6 @@ const auth = require('../middleware/auth');
 const { adminOnly, adminOrManager } = require('../middleware/authorize');
 
 // Payment routes - Admin and Manager only
-router.post('/create-order', auth, adminOrManager, paymentController.createPaymentOrder);
-router.post('/verify', auth, adminOrManager, paymentController.verifyPayment);
 router.post('/manual', auth, adminOrManager, paymentController.recordManualPayment);
 router.post('/split', auth, adminOrManager, paymentController.processSplitPayment);
 router.post('/partial', auth, adminOrManager, paymentController.recordPartialPayment);

@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useMemo,
+} from "react";
 import { useMenu } from "../context/MenuContext";
 import {
   DollarSign,
@@ -16,7 +22,6 @@ import {
   VolumeX,
   Link as LinkIcon,
   ChefHat,
-  Keyboard,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import axios from "axios";
@@ -456,14 +461,6 @@ const Dashboard = () => {
               Dashboard Overview
             </h2>
             <div className="flex items-center space-x-3">
-              <button
-                onClick={() => setShowShortcutsHelp(true)}
-                className="hidden sm:flex items-center space-x-2 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-medium transition-all"
-                title="Keyboard Shortcuts (?)"
-              >
-                <Keyboard className="w-4 h-4" />
-                <span>Shortcuts</span>
-              </button>
               <button
                 onClick={() => setSoundEnabled(!soundEnabled)}
                 className={`p-2 rounded-lg transition-all ${

@@ -91,6 +91,7 @@ model MenuItem {
   inventory   Inventory?
   ingredients MenuItemIngredient[]
   orderItems  OrderItem[]
+  platformMappings MenuItemMapping[] // Platform menu item mappings
   createdAt   DateTime             @default(now())
 }
 
@@ -262,6 +263,14 @@ model DeliveryInfo {
   // Notes
   specialInstructions String?
 
+  // Order confirmation workflow
+  confirmationStatus String?   @default("PENDING") // PENDING, ACCEPTED, REJECTED
+  confirmedBy        Int?      // User ID who confirmed
+  confirmedAt        DateTime?
+  rejectionReason    String?
+  preparationTime    Int?      // Estimated preparation time in minutes
+  platformResponse   String?   @db.Text // JSON response from platform API
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -274,13 +283,8 @@ model Payment {
   // Payment details
   amount      Decimal @db.Decimal(10, 2)
   currency    String  @default("INR")
-  paymentMode String // RAZORPAY, CASH, CARD, UPI
+  paymentMode String // CASH, CARD, UPI
   status      String  @default("PENDING") // PENDING, SUCCESS, FAILED, REFUNDED
-
-  // Razorpay specific
-  razorpayOrderId   String? @unique
-  razorpayPaymentId String? @unique
-  razorpaySignature String?
 
   // Refund details
   refundId     String?
@@ -299,4 +303,59 @@ model Payment {
   @@index([orderId])
   @@index([paymentMode])
   @@index([createdAt])
+}
+
+// Menu item mapping between POS and delivery platforms
+model MenuItemMapping {
+  id             Int              @id @default(autoincrement())
+  menuItemId     Int
+  menuItem       MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  platform       DeliveryPlatform
+  platformItemId String           // Platform's item ID/SKU
+  platformSKU    String?          // Additional SKU field
+  isActive       Boolean          @default(true)
+  lastSyncedAt   DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@unique([menuItemId, platform])
+  @@index([platform, platformItemId])
+}
+
+// Integration logs for audit trail
+model IntegrationLog {
+  id           Int              @id @default(autoincrement())
+  platform     DeliveryPlatform
+  eventType    String           // WEBHOOK_RECEIVED, API_CALL, MENU_SYNC, etc.
+  direction    String           // INBOUND, OUTBOUND
+  endpoint     String?
+  requestBody  String?          @db.Text
+  responseBody String?          @db.Text
+  statusCode   Int?
+  success      Boolean          @default(true)
+  errorMessage String?          @db.Text
+  orderId      Int?
+  createdAt    DateTime         @default(now())
+
+  @@index([platform, eventType, createdAt])
+  @@index([orderId])
+  @@index([success, createdAt])
+}
+
+// Platform configuration and credentials
+model PlatformConfig {
+  id                  Int              @id @default(autoincrement())
+  platform            DeliveryPlatform @unique
+  isEnabled           Boolean          @default(false)
+  apiKey              String?          @db.Text
+  restaurantId        String?
+  webhookSecret       String?          @db.Text
+  autoAcceptOrders    Boolean          @default(false)
+  defaultPrepTime     Int              @default(30) // Minutes
+  lastMenuSync        DateTime?
+  menuSyncEnabled     Boolean          @default(false)
+  statusUpdateEnabled Boolean          @default(true)
+  settings            String?          @db.Text // JSON for platform-specific settings
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
 }
