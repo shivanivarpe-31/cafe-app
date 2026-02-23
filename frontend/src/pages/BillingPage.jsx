@@ -1,5 +1,5 @@
 import axios from "axios";
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useMenu } from "../context/MenuContext";
 import {
   ShoppingCart,
@@ -15,8 +15,6 @@ import {
   Package,
   Truck,
   RefreshCw,
-  Users,
-  Clock,
   MapPin,
 } from "lucide-react";
 import Navbar from "../components/navbar";
@@ -27,19 +25,14 @@ import {
   logError,
 } from "../utils/errorHandler";
 import ErrorDisplay from "../components/ErrorDisplay";
-import {
-  LoadingSection,
-  SkeletonGrid,
-  SkeletonCard,
-  Spinner,
-} from "../components/Loading";
+import { SkeletonGrid } from "../components/Loading";
 import {
   EmptyCart,
   EmptySearchResults,
-  EmptyTables,
   EmptyMenu,
 } from "../components/EmptyState";
 import { showSuccess, showError, showWarning } from "../utils/toast";
+import config from "../config/businessConfig";
 
 const BillingPage = () => {
   const { menuItems, loading: menuLoading } = useMenu();
@@ -76,13 +69,19 @@ const BillingPage = () => {
     return `#${t.id}`;
   };
 
+  const abortControllerRef = useRef(null);
+
   // Wrap fetchTables in useCallback
   const fetchTables = useCallback(async () => {
     setTablesLoading(true);
     try {
       const results = await Promise.allSettled([
-        axios.get("/api/orders/tables"),
-        axios.get("/api/tables"),
+        axios.get("/api/orders/tables", {
+          signal: abortControllerRef.current?.signal,
+        }),
+        axios.get("/api/tables", {
+          signal: abortControllerRef.current?.signal,
+        }),
       ]);
       let chosen = null;
       for (const r of results) {
@@ -117,16 +116,23 @@ const BillingPage = () => {
   // NEW: Fetch modifications
   const fetchModifications = useCallback(async () => {
     try {
-      const res = await axios.get("/api/modifications");
+      const res = await axios.get("/api/modifications", {
+        signal: abortControllerRef.current?.signal,
+      });
       setModifications(res.data || { all: [], grouped: {} });
     } catch (err) {
+      if (err.name === "CanceledError" || err.name === "AbortError") return;
       console.error("Failed to fetch modifications:", err);
     }
   }, []);
 
   // Fetch tables on mount and set up smart polling
   useEffect(() => {
+    abortControllerRef.current = new AbortController();
     fetchModifications(); // Fetch once
+    return () => {
+      abortControllerRef.current.abort();
+    };
   }, [fetchModifications]);
 
   // Smart polling for tables (only when page is visible and user is active)
@@ -371,7 +377,7 @@ const BillingPage = () => {
 
   // UPDATED: Use getItemTotal for calculations
   const subtotal = cart.reduce((sum, item) => sum + getItemTotal(item), 0);
-  const tax = subtotal * 0.05;
+  const tax = subtotal * config.tax.rate;
   const total = subtotal + tax;
 
   const categories = [
@@ -563,7 +569,6 @@ const BillingPage = () => {
                   {tables.map((table) => {
                     const status = getStatus(table.status);
                     const isSelected = tableId === table.id;
-                    const isAvailable = status === "available";
                     const isOccupied = status === "occupied";
                     const isReserved = status === "reserved";
 
@@ -686,14 +691,16 @@ const BillingPage = () => {
                         </div>
                       )}
 
-                      <div
+                      <button
+                        type="button"
                         onClick={() => addToCart(item)}
-                        className="aspect-square bg-gradient-to-br from-gray-100 to-gray-50 rounded-xl mb-2 flex items-center justify-center group-hover:from-red-50 group-hover:to-orange-50 transition-colors relative"
+                        className="w-full aspect-square bg-gradient-to-br from-gray-100 to-gray-50 rounded-xl mb-2 flex items-center justify-center group-hover:from-red-50 group-hover:to-orange-50 transition-colors relative"
+                        aria-label={`Add ${item.name} to cart`}
                       >
                         <span className="text-3xl group-hover:scale-110 transition-transform">
                           🍽️
                         </span>
-                      </div>
+                      </button>
 
                       <h3
                         className="font-semibold text-gray-900 text-sm mb-0.5 truncate"
@@ -904,8 +911,11 @@ const BillingPage = () => {
                       </span>
                     </div>
                     <div className="flex justify-between text-sm text-gray-600">
-                      <span>GST (5%)</span>
-                      <span className="font-medium">₹{tax.toFixed(0)}</span>
+                      <span>{config.tax.label}</span>
+                      <span className="font-medium">
+                        {config.currency.symbol}
+                        {tax.toFixed(0)}
+                      </span>
                     </div>
                     <div className="flex justify-between text-xl font-bold text-gray-900 pt-3 border-t border-gray-200">
                       <span>Total</span>
@@ -945,13 +955,22 @@ const BillingPage = () => {
       {/* NEW: Modification Modal */}
       {showModModal && editingCartIndex !== null && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+          <div
+            className="bg-white rounded-2xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mod-modal-title"
+          >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold text-gray-900">
+              <h3
+                id="mod-modal-title"
+                className="text-xl font-bold text-gray-900"
+              >
                 Customize: {cart[editingCartIndex]?.name}
               </h3>
               <button
                 onClick={() => setShowModModal(false)}
+                aria-label="Close modal"
                 className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
               >
                 <X className="w-6 h-6" />

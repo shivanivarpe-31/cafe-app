@@ -7,7 +7,7 @@ const parseLocalDate = (dateStr) => {
 };
 
 // Get statistics - accepts optional 'date' query param for historical data
-exports.getStats = async (req, res) => {
+exports.getStats = async (req, res, next) => {
     try {
         const { date } = req.query;
         console.log('📊 getStats called with date param:', date);
@@ -33,53 +33,60 @@ exports.getStats = async (req, res) => {
         const previousDay = new Date(targetDate);
         previousDay.setDate(previousDay.getDate() - 1);
 
-        // Target day's orders
-        const targetOrders = await prisma.order.findMany({
+        // Target day's aggregated sales (PAID orders only)
+        const targetAgg = await prisma.order.aggregate({
             where: {
-                createdAt: {
-                    gte: targetDate,
-                    lt: targetNextDay
-                }
+                createdAt: { gte: targetDate, lt: targetNextDay },
+                status: 'PAID'
             },
-            include: {
-                items: true
-            }
+            _sum: { total: true },
+            _count: { id: true }
+        });
+        const targetSales = parseFloat(targetAgg._sum.total || 0);
+        const targetPaidCount = targetAgg._count.id;
+
+        // Target day's total order count (all statuses)
+        const targetOrderCount = await prisma.order.count({
+            where: { createdAt: { gte: targetDate, lt: targetNextDay } }
         });
 
-        // Previous day's orders for comparison
-        const previousOrders = await prisma.order.findMany({
+        // Previous day's aggregated sales
+        const previousAgg = await prisma.order.aggregate({
             where: {
-                createdAt: {
-                    gte: previousDay,
-                    lt: targetDate
-                }
+                createdAt: { gte: previousDay, lt: targetDate },
+                status: 'PAID'
             },
-            include: {
-                items: true
-            }
+            _sum: { total: true },
+            _count: { id: true }
+        });
+        const previousSales = parseFloat(previousAgg._sum.total || 0);
+        const previousPaidCount = previousAgg._count.id;
+        const previousOrderCount = await prisma.order.count({
+            where: { createdAt: { gte: previousDay, lt: targetDate } }
         });
 
-        // Calculate target day's sales (only PAID orders)
-        const targetPaidOrders = targetOrders.filter(o => o.status === 'PAID');
-        const targetSales = targetPaidOrders.reduce((sum, order) => {
-            return sum + parseFloat(order.total);
-        }, 0);
+        // Items sold — aggregate via orderItem
+        const targetItemsAgg = await prisma.orderItem.aggregate({
+            where: {
+                order: {
+                    createdAt: { gte: targetDate, lt: targetNextDay },
+                    status: 'PAID'
+                }
+            },
+            _sum: { quantity: true }
+        });
+        const totalItemsSold = targetItemsAgg._sum.quantity || 0;
 
-        // Calculate previous day's sales for comparison
-        const previousPaidOrders = previousOrders.filter(o => o.status === 'PAID');
-        const previousSales = previousPaidOrders.reduce((sum, order) => {
-            return sum + parseFloat(order.total);
-        }, 0);
-
-        // Calculate total items sold on target day
-        const totalItemsSold = targetPaidOrders.reduce((sum, order) => {
-            return sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
-        }, 0);
-
-        // Calculate previous day's items sold
-        const previousItemsSold = previousPaidOrders.reduce((sum, order) => {
-            return sum + order.items.reduce((itemSum, item) => itemSum + item.quantity, 0);
-        }, 0);
+        const previousItemsAgg = await prisma.orderItem.aggregate({
+            where: {
+                order: {
+                    createdAt: { gte: previousDay, lt: targetDate },
+                    status: 'PAID'
+                }
+            },
+            _sum: { quantity: true }
+        });
+        const previousItemsSold = previousItemsAgg._sum.quantity || 0;
 
         // Low stock items
         const lowStockItems = await prisma.inventory.findMany({
@@ -97,9 +104,10 @@ exports.getStats = async (req, res) => {
             }
         });
 
-        // Low stock ingredients
-        const allIngredients = await prisma.ingredient.findMany();
-        const lowStockIngredients = allIngredients.filter(ing => ing.currentStock <= ing.minStock);
+        // Low stock ingredients (filter at DB level)
+        const lowStockIngredients = await prisma.$queryRaw`
+            SELECT * FROM Ingredient WHERE currentStock <= minStock
+        `;
 
         // Top selling items (last 7 days)
         const weekAgo = new Date();
@@ -199,30 +207,43 @@ exports.getStats = async (req, res) => {
         });
 
         // Average order value
-        const avgOrderValue = targetPaidOrders.length > 0
-            ? targetSales / targetPaidOrders.length
+        const avgOrderValue = targetPaidCount > 0
+            ? targetSales / targetPaidCount
             : 0;
-        const previousAvgOrderValue = previousPaidOrders.length > 0
-            ? previousSales / previousPaidOrders.length
+        const previousAvgOrderValue = previousPaidCount > 0
+            ? previousSales / previousPaidCount
             : 0;
 
-        // Payment method breakdown (target day) - check both uppercase and lowercase for compatibility
-        const paymentBreakdown = {
-            cash: targetPaidOrders.filter(o => o.paymentMode?.toUpperCase() === 'CASH').length,
-            card: targetPaidOrders.filter(o => o.paymentMode?.toUpperCase() === 'CARD').length,
-            upi: targetPaidOrders.filter(o => o.paymentMode?.toUpperCase() === 'UPI').length
-        };
-        console.log('💰 Target day paid orders:', targetPaidOrders.length, 'Payment modes:', targetPaidOrders.map(o => o.paymentMode));
-
-        // Peak hours analysis (target day)
-        const hourlyOrders = {};
-        targetOrders.forEach(order => {
-            const hour = new Date(order.createdAt).getHours();
-            hourlyOrders[hour] = (hourlyOrders[hour] || 0) + 1;
+        // Payment method breakdown (target day) — aggregated at DB level
+        const paymentBreakdownRaw = await prisma.order.groupBy({
+            by: ['paymentMode'],
+            where: {
+                createdAt: { gte: targetDate, lt: targetNextDay },
+                status: 'PAID'
+            },
+            _count: { id: true }
         });
-        const peakHours = Object.entries(hourlyOrders)
-            .map(([hour, count]) => ({ hour: parseInt(hour), orders: count }))
-            .sort((a, b) => b.orders - a.orders);
+        const paymentBreakdown = { cash: 0, card: 0, upi: 0 };
+        for (const row of paymentBreakdownRaw) {
+            const mode = (row.paymentMode || '').toLowerCase();
+            if (paymentBreakdown.hasOwnProperty(mode)) {
+                paymentBreakdown[mode] = row._count.id;
+            }
+        }
+
+        // Peak hours analysis (target day) — aggregated via raw SQL
+        const hourlyOrdersRaw = await prisma.$queryRaw`
+            SELECT HOUR(createdAt) as hour, COUNT(*) as count
+            FROM \`Order\`
+            WHERE createdAt >= ${targetDate} AND createdAt < ${targetNextDay}
+            GROUP BY HOUR(createdAt)
+            ORDER BY count DESC
+            LIMIT 5
+        `;
+        const peakHours = hourlyOrdersRaw.map(row => ({
+            hour: Number(row.hour),
+            orders: Number(row.count)
+        }));
 
         // Table utilization
         const allTables = await prisma.table.findMany();
@@ -231,20 +252,20 @@ exports.getStats = async (req, res) => {
             ? Math.round((occupiedTables / allTables.length) * 100)
             : 0;
 
-        console.log('✅ Stats result: targetSales=', targetSales, 'targetOrders=', targetOrders.length, 'previousSales=', previousSales);
+        console.log('✅ Stats result: targetSales=', targetSales, 'targetOrders=', targetOrderCount, 'previousSales=', previousSales);
 
         res.json({
             // Target day's metrics (labeled as "today" for frontend compatibility)
             todaySales: targetSales,
-            todayOrders: targetOrders.length,
-            todayPaidOrders: targetPaidOrders.length,
+            todayOrders: targetOrderCount,
+            todayPaidOrders: targetPaidCount,
             totalItemsSold,
             avgOrderValue: Math.round(avgOrderValue * 100) / 100,
 
             // Previous day's metrics for comparison (labeled as "yesterday" for frontend compatibility)
             yesterdaySales: previousSales,
-            yesterdayOrders: previousOrders.length,
-            yesterdayPaidOrders: previousPaidOrders.length,
+            yesterdayOrders: previousOrderCount,
+            yesterdayPaidOrders: previousPaidCount,
             yesterdayItemsSold: previousItemsSold,
             yesterdayAvgOrderValue: Math.round(previousAvgOrderValue * 100) / 100,
 
@@ -252,8 +273,8 @@ exports.getStats = async (req, res) => {
             salesGrowth: previousSales > 0
                 ? Math.round(((targetSales - previousSales) / previousSales) * 1000) / 10
                 : 0,
-            ordersGrowth: previousOrders.length > 0
-                ? Math.round(((targetOrders.length - previousOrders.length) / previousOrders.length) * 1000) / 10
+            ordersGrowth: previousOrderCount > 0
+                ? Math.round(((targetOrderCount - previousOrderCount) / previousOrderCount) * 1000) / 10
                 : 0,
             itemsGrowth: previousItemsSold > 0
                 ? Math.round(((totalItemsSold - previousItemsSold) / previousItemsSold) * 1000) / 10
@@ -290,7 +311,7 @@ exports.getStats = async (req, res) => {
 
             // Additional analytics
             paymentBreakdown,
-            peakHours: peakHours.slice(0, 5),
+            peakHours,
             tableUtilization,
             totalTables: allTables.length,
             occupiedTables
@@ -298,15 +319,12 @@ exports.getStats = async (req, res) => {
 
     } catch (error) {
         console.error('Error fetching stats:', error);
-        res.status(500).json({
-            error: 'Failed to fetch statistics',
-            message: error.message
-        });
+        next(error);
     }
 };
 
 // Get sales trend (EXISTING - unchanged)
-exports.getSalesTrend = async (req, res) => {
+exports.getSalesTrend = async (req, res, next) => {
     try {
         const { from, to } = req.query;
         console.log('📈 Fetching sales trend from', from, 'to', to);
@@ -338,91 +356,77 @@ exports.getSalesTrend = async (req, res) => {
 
         console.log('📅 Parsed dates - Start:', startDate.toISOString(), 'End:', endDate.toISOString());
 
-        // Get orders in date range (all statuses for trend, but calculate sales from PAID)
-        const orders = await prisma.order.findMany({
-            where: {
-                createdAt: {
-                    gte: startDate,
-                    lte: endDate
-                }
-            },
-            include: {
-                items: true
-            }
-        });
+        // Aggregate sales by day using raw SQL
+        const dailySalesRaw = await prisma.$queryRaw`
+            SELECT
+                DATE(createdAt) as orderDate,
+                COUNT(*) as totalOrders,
+                SUM(CASE WHEN status = 'PAID' THEN total ELSE 0 END) as paidSales
+            FROM \`Order\`
+            WHERE createdAt >= ${startDate} AND createdAt <= ${endDate}
+            GROUP BY DATE(createdAt)
+        `;
 
-        console.log('📦 Found', orders.length, 'orders in date range');
+        const dailyItemsRaw = await prisma.$queryRaw`
+            SELECT
+                DATE(o.createdAt) as orderDate,
+                SUM(oi.quantity) as totalItems
+            FROM OrderItem oi
+            JOIN \`Order\` o ON oi.orderId = o.id
+            WHERE o.createdAt >= ${startDate} AND o.createdAt <= ${endDate}
+                AND o.status = 'PAID'
+            GROUP BY DATE(o.createdAt)
+        `;
 
-        // Group by day
-        const salesByDay = {};
+        // Build lookup maps from aggregated data
+        const salesMap = {};
+        for (const row of dailySalesRaw) {
+            const d = new Date(row.orderDate);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            salesMap[key] = {
+                sales: parseFloat(row.paidSales || 0),
+                orders: Number(row.totalOrders || 0)
+            };
+        }
+        const itemsMap = {};
+        for (const row of dailyItemsRaw) {
+            const d = new Date(row.orderDate);
+            const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+            itemsMap[key] = Number(row.totalItems || 0);
+        }
 
-        // Initialize all days in range (use local date formatting)
+        // Build result with all days in range (fill zeros for missing days)
+        const salesTrend = [];
         const currentDate = new Date(startDate);
         while (currentDate <= endDate) {
-            // Format as YYYY-MM-DD in local time
             const year = currentDate.getFullYear();
             const month = String(currentDate.getMonth() + 1).padStart(2, '0');
             const day = String(currentDate.getDate()).padStart(2, '0');
             const dateStr = `${year}-${month}-${day}`;
+            const dateObj = new Date(year, currentDate.getMonth(), currentDate.getDate());
 
-            salesByDay[dateStr] = {
-                sales: 0,
-                orders: 0,
-                items: 0
-            };
+            salesTrend.push({
+                name: dateObj.toLocaleDateString('en-US', { weekday: 'short' }),
+                date: dateStr,
+                fullDate: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                sales: Math.round((salesMap[dateStr]?.sales || 0) * 100) / 100,
+                orders: salesMap[dateStr]?.orders || 0,
+                items: itemsMap[dateStr] || 0
+            });
+
             currentDate.setDate(currentDate.getDate() + 1);
         }
 
-        console.log('📆 Initialized days:', Object.keys(salesByDay));
-
-        // Fill in actual data
-        orders.forEach(order => {
-            // Format order date in local time
-            const orderDate = new Date(order.createdAt);
-            const year = orderDate.getFullYear();
-            const month = String(orderDate.getMonth() + 1).padStart(2, '0');
-            const day = String(orderDate.getDate()).padStart(2, '0');
-            const date = `${year}-${month}-${day}`;
-
-            if (salesByDay[date]) {
-                salesByDay[date].orders += 1;
-                if (order.status === 'PAID') {
-                    salesByDay[date].sales += parseFloat(order.total);
-                    salesByDay[date].items += order.items.reduce((sum, item) => sum + item.quantity, 0);
-                }
-            }
-        });
-
-        // Convert to array format
-        const salesTrend = Object.entries(salesByDay)
-            .map(([date, data]) => {
-                const [year, month, day] = date.split('-').map(Number);
-                const dateObj = new Date(year, month - 1, day);
-                return {
-                    name: dateObj.toLocaleDateString('en-US', { weekday: 'short' }),
-                    date,
-                    fullDate: dateObj.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                    sales: Math.round(data.sales * 100) / 100,
-                    orders: data.orders,
-                    items: data.items
-                };
-            })
-            .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-        console.log('✅ Sales trend result:', salesTrend);
         res.json(salesTrend);
 
     } catch (error) {
         console.error('Error fetching sales trend:', error);
-        res.status(500).json({
-            error: 'Failed to fetch sales trend',
-            message: error.message
-        });
+        next(error);
     }
 };
 
 // Get category-wise sales (EXISTING - unchanged)
-exports.getCategorySales = async (req, res) => {
+exports.getCategorySales = async (req, res, next) => {
     try {
         const { from, to } = req.query;
 
@@ -430,46 +434,51 @@ exports.getCategorySales = async (req, res) => {
         const startDate = from ? new Date(from) : new Date();
         if (!from) startDate.setDate(startDate.getDate() - 30);
 
-        const orderItems = await prisma.orderItem.findMany({
+        // Aggregate category sales using Prisma groupBy + batched category lookup
+        const itemSales = await prisma.orderItem.groupBy({
+            by: ['menuItemId'],
             where: {
                 order: {
-                    createdAt: {
-                        gte: startDate,
-                        lte: endDate
-                    },
+                    createdAt: { gte: startDate, lte: endDate },
                     status: 'PAID'
                 }
             },
-            include: {
-                menuItem: {
-                    include: {
-                        category: true
-                    }
-                }
-            }
+            _sum: { quantity: true, price: true }
         });
 
+        // Batch fetch menu items with categories
+        const menuItemIds = itemSales.map(i => i.menuItemId);
+        const menuItemsMap = new Map();
+        if (menuItemIds.length > 0) {
+            const menuItems = await prisma.menuItem.findMany({
+                where: { id: { in: menuItemIds } },
+                include: { category: true }
+            });
+            for (const mi of menuItems) menuItemsMap.set(mi.id, mi);
+        }
+
         const categoryMap = {};
-        orderItems.forEach(item => {
-            const categoryName = item.menuItem?.category?.name || 'Uncategorized';
+        for (const item of itemSales) {
+            const menuItem = menuItemsMap.get(item.menuItemId);
+            const categoryName = menuItem?.category?.name || 'Uncategorized';
             if (!categoryMap[categoryName]) {
                 categoryMap[categoryName] = { name: categoryName, sales: 0, items: 0 };
             }
-            categoryMap[categoryName].sales += parseFloat(item.price) * item.quantity;
-            categoryMap[categoryName].items += item.quantity;
-        });
+            categoryMap[categoryName].sales += parseFloat(item._sum.price || 0) * (item._sum.quantity || 0);
+            categoryMap[categoryName].items += item._sum.quantity || 0;
+        }
 
         const categorySales = Object.values(categoryMap).sort((a, b) => b.sales - a.sales);
         res.json(categorySales);
 
     } catch (error) {
         console.error('Error fetching category sales:', error);
-        res.status(500).json({ error: 'Failed to fetch category sales' });
+        next(error);
     }
 };
 
 // Get hourly sales pattern (EXISTING - unchanged)
-exports.getHourlySales = async (req, res) => {
+exports.getHourlySales = async (req, res, next) => {
     try {
         const { date } = req.query;
 
@@ -478,14 +487,24 @@ exports.getHourlySales = async (req, res) => {
         const nextDay = new Date(targetDate);
         nextDay.setDate(nextDay.getDate() + 1);
 
-        const orders = await prisma.order.findMany({
-            where: {
-                createdAt: {
-                    gte: targetDate,
-                    lt: nextDay
-                }
-            }
-        });
+        // Aggregate hourly data using raw SQL
+        const hourlyRaw = await prisma.$queryRaw`
+            SELECT
+                HOUR(createdAt) as hour,
+                COUNT(*) as totalOrders,
+                SUM(CASE WHEN status = 'PAID' THEN total ELSE 0 END) as paidSales
+            FROM \`Order\`
+            WHERE createdAt >= ${targetDate} AND createdAt < ${nextDay}
+            GROUP BY HOUR(createdAt)
+        `;
+
+        const hourlyMap = {};
+        for (const row of hourlyRaw) {
+            hourlyMap[Number(row.hour)] = {
+                orders: Number(row.totalOrders),
+                sales: parseFloat(row.paidSales || 0)
+            };
+        }
 
         // Initialize all hours
         const hourlyData = [];
@@ -493,32 +512,23 @@ exports.getHourlySales = async (req, res) => {
             hourlyData.push({
                 hour: i,
                 label: `${i.toString().padStart(2, '0')}:00`,
-                orders: 0,
-                sales: 0
+                orders: hourlyMap[i]?.orders || 0,
+                sales: Math.round((hourlyMap[i]?.sales || 0) * 100) / 100
             });
         }
-
-        // Fill in data
-        orders.forEach(order => {
-            const hour = new Date(order.createdAt).getHours();
-            hourlyData[hour].orders += 1;
-            if (order.status === 'PAID') {
-                hourlyData[hour].sales += parseFloat(order.total);
-            }
-        });
 
         res.json(hourlyData);
 
     } catch (error) {
         console.error('Error fetching hourly sales:', error);
-        res.status(500).json({ error: 'Failed to fetch hourly sales' });
+        next(error);
     }
 };
 
 // ============================================
 // NEW: Get profit analysis for all menu items
 // ============================================
-exports.getProfitAnalysis = async (req, res) => {
+exports.getProfitAnalysis = async (req, res, next) => {
     try {
         const { from, to } = req.query;
 
@@ -635,9 +645,6 @@ exports.getProfitAnalysis = async (req, res) => {
 
     } catch (error) {
         console.error('Error fetching profit analysis:', error);
-        res.status(500).json({
-            error: 'Failed to fetch profit analysis',
-            message: error.message
-        });
+        next(error);
     }
 };

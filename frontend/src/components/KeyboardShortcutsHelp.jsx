@@ -1,8 +1,10 @@
 import React from "react";
 import { X, Keyboard } from "lucide-react";
 import { formatShortcut } from "../hooks/useKeyboardShortcuts";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const KeyboardShortcutsHelp = ({ isOpen, onClose }) => {
+  const focusTrapRef = useFocusTrap(isOpen, onClose);
   if (!isOpen) return null;
 
   const shortcuts = [
@@ -41,9 +43,19 @@ const KeyboardShortcutsHelp = ({ isOpen, onClose }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
+      <div
+        className="bg-white rounded-2xl p-6 max-w-2xl w-full max-h-[90vh] overflow-y-auto"
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="keyboard-shortcuts-title"
+        tabIndex={-1}
+      >
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900 flex items-center">
+          <h2
+            id="keyboard-shortcuts-title"
+            className="text-2xl font-bold text-gray-900 flex items-center"
+          >
             <Keyboard className="w-6 h-6 mr-3 text-red-500" />
             Keyboard Shortcuts
           </h2>

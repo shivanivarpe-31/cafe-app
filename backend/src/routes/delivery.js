@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const deliveryController = require('../controllers/deliveryController');
+const { handleSwiggyWebhook } = require('../integrations/swiggy/swiggyWebhookHandler');
+const { handleZomatoWebhook } = require('../integrations/zomato/zomatoWebhookHandler');
 const auth = require('../middleware/auth');
 const { adminOrManager } = require('../middleware/authorize');
 
@@ -15,7 +17,8 @@ router.put('/:id/status', auth, adminOrManager, deliveryController.updateDeliver
 router.post('/simulate', auth, adminOrManager, deliveryController.simulateOnlineOrder);
 
 // Webhook routes (no auth - verified by platform signatures)
-router.post('/webhook/zomato', deliveryController.zomatoWebhook);
-router.post('/webhook/swiggy', deliveryController.swiggyWebhook);
+// Use production-ready handlers with signature verification
+router.post('/webhook/zomato', handleZomatoWebhook);
+router.post('/webhook/swiggy', handleSwiggyWebhook);
 
 module.exports = router;

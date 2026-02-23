@@ -1,4 +1,6 @@
 const { prisma } = require('../prisma');
+const config = require('../config/businessConfig');
+const { getPaginationParams, formatPaginatedResponse } = require('../utils/pagination');
 const {
     createNotFoundError,
     createValidationError,
@@ -25,14 +27,26 @@ exports.recordManualPayment = async (req, res, next) => {
             return res.status(404).json({ error: 'Order not found' });
         }
 
+        const parsedAmount = parseFloat(amount);
+
+        if (parsedAmount <= 0) {
+            return res.status(400).json({ error: 'Amount must be greater than zero' });
+        }
+
+        if (parsedAmount > parseFloat(order.total) + 0.01) {
+            return res.status(400).json({
+                error: `Amount (${parsedAmount}) exceeds order total (${order.total})`
+            });
+        }
+
         // Use transaction to ensure payment record and order update succeed together
         const payment = await prisma.$transaction(async (tx) => {
             // Create payment record
             const paymentRecord = await tx.payment.create({
                 data: {
                     orderId: parseInt(orderId, 10),
-                    amount: parseFloat(amount),
-                    currency: 'INR',
+                    amount: parsedAmount,
+                    currency: config.currency.code,
                     paymentMode: paymentMode.toUpperCase(),
                     status: 'SUCCESS',
                     notes: notes || null
@@ -102,7 +116,8 @@ exports.getPaymentDetails = async (req, res, next) => {
 // Get all payments
 exports.getAllPayments = async (req, res, next) => {
     try {
-        const { status, paymentMode, startDate, endDate, limit = 50 } = req.query;
+        const { status, paymentMode, startDate, endDate } = req.query;
+        const { page, limit, skip } = getPaginationParams(req);
 
         const where = {};
 
@@ -126,32 +141,34 @@ exports.getAllPayments = async (req, res, next) => {
             }
         }
 
-        const payments = await prisma.payment.findMany({
-            where,
-            include: {
-                order: {
-                    select: {
-                        id: true,
-                        billNumber: true,
-                        orderType: true,
-                        tableId: true
+        const [payments, total, summary] = await Promise.all([
+            prisma.payment.findMany({
+                where,
+                include: {
+                    order: {
+                        select: {
+                            id: true,
+                            billNumber: true,
+                            orderType: true,
+                            tableId: true
+                        }
                     }
-                }
-            },
-            orderBy: { createdAt: 'desc' },
-            take: parseInt(limit, 10)
-        });
-
-        // Calculate summary
-        const summary = await prisma.payment.aggregate({
-            where: { ...where, status: 'SUCCESS' },
-            _sum: { amount: true },
-            _count: true
-        });
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.payment.count({ where }),
+            prisma.payment.aggregate({
+                where: { ...where, status: 'SUCCESS' },
+                _sum: { amount: true },
+                _count: true
+            })
+        ]);
 
         res.json({
             success: true,
-            payments,
+            ...formatPaginatedResponse(payments, total, page, limit),
             summary: {
                 totalAmount: summary._sum.amount || 0,
                 totalCount: summary._count || 0
@@ -203,6 +220,22 @@ exports.refundPayment = async (req, res, next) => {
             return res.status(404).json({ error: 'Payment record not found' });
         }
 
+        // Validate refund amount doesn't exceed original payment
+        const refundAmount = amount ? parseFloat(amount) : paymentRecord.amount;
+        if (isNaN(refundAmount) || refundAmount <= 0) {
+            return res.status(400).json({ error: 'Refund amount must be a positive number' });
+        }
+        if (refundAmount > parseFloat(paymentRecord.amount)) {
+            return res.status(400).json({
+                error: 'Refund amount cannot exceed original payment',
+                originalAmount: parseFloat(paymentRecord.amount),
+                requestedRefund: refundAmount
+            });
+        }
+        if (paymentRecord.status === 'REFUNDED') {
+            return res.status(400).json({ error: 'This payment has already been refunded' });
+        }
+
         // Update database records in transaction
         await prisma.$transaction(async (tx) => {
             // Update payment record
@@ -210,7 +243,7 @@ exports.refundPayment = async (req, res, next) => {
                 where: { id: paymentRecord.id },
                 data: {
                     status: 'REFUNDED',
-                    refundAmount: amount ? parseFloat(amount) : paymentRecord.amount,
+                    refundAmount: refundAmount,
                     refundedAt: new Date(),
                     notes: JSON.stringify({
                         ...JSON.parse(paymentRecord.notes || '{}'),
@@ -313,7 +346,7 @@ exports.processSplitPayment = async (req, res, next) => {
         const orderTotal = parseFloat(order.total);
         if (Math.abs(totalAmount - orderTotal) >= 0.01) {
             return res.status(400).json({
-                error: `Total split amount (₹${totalAmount.toFixed(2)}) does not match order total (₹${orderTotal.toFixed(2)})`
+                error: `Total split amount (${config.currency.symbol}${totalAmount.toFixed(2)}) does not match order total (${config.currency.symbol}${orderTotal.toFixed(2)})`
             });
         }
 
@@ -324,7 +357,7 @@ exports.processSplitPayment = async (req, res, next) => {
                 data: {
                     orderId: order.id,
                     amount: parseFloat(payments[0].amount),
-                    currency: 'INR',
+                    currency: config.currency.code,
                     paymentMode: payments[0].paymentMode.toUpperCase(),
                     status: 'SUCCESS',
                     notes: JSON.stringify({
@@ -340,7 +373,7 @@ exports.processSplitPayment = async (req, res, next) => {
                 data: {
                     orderId: order.id,
                     amount: parseFloat(payments[1].amount),
-                    currency: 'INR',
+                    currency: config.currency.code,
                     paymentMode: payments[1].paymentMode.toUpperCase(),
                     status: 'SUCCESS',
                     notes: JSON.stringify({

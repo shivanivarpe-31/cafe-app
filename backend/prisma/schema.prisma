@@ -307,16 +307,18 @@ model Payment {
 
 // Menu item mapping between POS and delivery platforms
 model MenuItemMapping {
-  id             Int              @id @default(autoincrement())
-  menuItemId     Int
-  menuItem       MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
-  platform       DeliveryPlatform
-  platformItemId String           // Platform's item ID/SKU
-  platformSKU    String?          // Additional SKU field
-  isActive       Boolean          @default(true)
-  lastSyncedAt   DateTime?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
+  id               Int              @id @default(autoincrement())
+  menuItemId       Int
+  menuItem         MenuItem         @relation(fields: [menuItemId], references: [id], onDelete: Cascade)
+  platform         DeliveryPlatform
+  platformItemId   String           // Platform's item ID/SKU
+  platformItemName String?          // Item name on the platform
+  platformPrice    Decimal?         @db.Decimal(10, 2) // Platform-specific price
+  platformSKU      String?          // Additional SKU field
+  isActive         Boolean          @default(true)
+  lastSyncedAt     DateTime?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
   @@unique([menuItemId, platform])
   @@index([platform, platformItemId])

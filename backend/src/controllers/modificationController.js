@@ -1,4 +1,5 @@
 const { prisma } = require('../prisma');
+const { getPaginationParams, formatPaginatedResponse } = require('../utils/pagination');
 
 // Get all modifications
 exports.getModifications = async (req, res, next) => {
@@ -32,13 +33,26 @@ exports.getModifications = async (req, res, next) => {
 // Get all modifications (including inactive) for admin
 exports.getAllModifications = async (req, res, next) => {
     try {
-        const modifications = await prisma.modification.findMany({
-            orderBy: [
-                { category: 'asc' },
-                { name: 'asc' }
-            ]
-        });
-        res.json(modifications);
+        const { page, limit, skip } = getPaginationParams(req);
+
+        const where = {};
+        if (req.query.category) where.category = req.query.category;
+        if (req.query.search) where.name = { contains: req.query.search, mode: 'insensitive' };
+
+        const [modifications, total] = await Promise.all([
+            prisma.modification.findMany({
+                where,
+                orderBy: [
+                    { category: 'asc' },
+                    { name: 'asc' }
+                ],
+                skip,
+                take: limit
+            }),
+            prisma.modification.count({ where })
+        ]);
+
+        res.json(formatPaginatedResponse(modifications, total, page, limit));
     } catch (error) {
         console.error('Get all modifications error:', error);
         next(error);
@@ -78,6 +92,16 @@ exports.updateModification = async (req, res, next) => {
     try {
         const { id } = req.params;
         const { name, price, category, isActive } = req.body;
+
+        if (!id || isNaN(parseInt(id, 10))) {
+            return res.status(400).json({ error: 'Valid modification ID is required' });
+        }
+        if (name !== undefined && (typeof name !== 'string' || name.trim().length === 0)) {
+            return res.status(400).json({ error: 'Name cannot be empty' });
+        }
+        if (price !== undefined && (isNaN(parseFloat(price)) || parseFloat(price) < 0)) {
+            return res.status(400).json({ error: 'Price must be a non-negative number' });
+        }
 
         const modification = await prisma.modification.update({
             where: { id: parseInt(id, 10) },

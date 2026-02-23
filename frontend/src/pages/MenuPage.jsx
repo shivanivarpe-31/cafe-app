@@ -102,7 +102,7 @@ const MenuPage = () => {
       const res = await axios.get("/api/menu/items/detailed", {
         signal: abortControllerRef.current.signal,
       });
-      setMenuItems(res.data || []);
+      setMenuItems(res.data.data || res.data || []);
     } catch (err) {
       if (err.name === "AbortError" || err.name === "CanceledError") {
         return;
@@ -935,15 +935,22 @@ const MenuPage = () => {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
           <div
             className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="menu-shortcuts-title"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <h3
+                id="menu-shortcuts-title"
+                className="text-lg font-bold text-gray-900 flex items-center gap-2"
+              >
                 <Keyboard className="w-5 h-5 text-gray-500" />
                 Keyboard Shortcuts
               </h3>
               <button
                 onClick={() => setShowKeyboardHelp(false)}
+                aria-label="Close modal"
                 className="p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5" />

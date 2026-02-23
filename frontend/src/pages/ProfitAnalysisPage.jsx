@@ -1,4 +1,10 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import axios from "axios";
 import {
   TrendingUp,
@@ -57,14 +63,18 @@ const ProfitAnalysisPage = () => {
     return instance;
   }, []);
 
+  const abortControllerRef = useRef(null);
+
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       const res = await api.get(
         `/reports/profit-analysis?from=${dateRange.from}&to=${dateRange.to}`,
+        { signal: abortControllerRef.current?.signal },
       );
       setData(res.data);
     } catch (err) {
+      if (err.name === "CanceledError" || err.name === "AbortError") return;
       console.error("Failed to fetch profit analysis:", err);
     } finally {
       setLoading(false);
@@ -72,7 +82,11 @@ const ProfitAnalysisPage = () => {
   }, [api, dateRange.from, dateRange.to]);
 
   useEffect(() => {
+    abortControllerRef.current = new AbortController();
     fetchData();
+    return () => {
+      abortControllerRef.current.abort();
+    };
   }, [fetchData]);
 
   const sortedItems = useMemo(() => {

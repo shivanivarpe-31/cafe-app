@@ -25,20 +25,20 @@ export const PLATFORM_STYLES = {
     border: "border-orange-400 bg-orange-50",
   },
   DEFAULT: {
-    badge: "bg-gray-500 text-white",
+    badge: "bg-gray-500 text-gray-800",
     border: "border-blue-400 bg-blue-50",
   },
 };
 
 // Delivery status color mapping
 export const DELIVERY_STATUS_COLORS = {
-  PENDING: "bg-yellow-100 text-yellow-800",
-  CONFIRMED: "bg-blue-100 text-blue-800",
-  PREPARING: "bg-orange-100 text-orange-800",
-  READY_FOR_PICKUP: "bg-green-100 text-green-800",
-  OUT_FOR_DELIVERY: "bg-purple-100 text-purple-800",
-  DELIVERED: "bg-green-500 text-white",
-  CANCELLED: "bg-red-100 text-red-800",
+  PENDING: "bg-yellow-100 text-gray-800",
+  CONFIRMED: "bg-blue-100 text-gray-800",
+  PREPARING: "bg-orange-100 text-gray-800",
+  READY_FOR_PICKUP: "bg-green-100 text-gray-800",
+  OUT_FOR_DELIVERY: "bg-purple-100 text-gray-800",
+  DELIVERED: "bg-green-500 text-gray-800",
+  CANCELLED: "bg-red-100 text-gray-800",
 };
 
 // Table status color mapping

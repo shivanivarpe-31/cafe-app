@@ -2,9 +2,13 @@ import React from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
+import { IntegrationProvider } from './context/IntegrationContext';
+import ErrorBoundary from './components/ErrorBoundary';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import { MenuProvider } from './context/MenuContext';
+import IntegrationSettings from './pages/IntegrationSettings';
+import PlatformOrders from './components/PlatformOrders';
 import MenuPage from './pages/MenuPage';
 import BillingPage from './pages/BillingPage';
 import ReportsPage from './pages/ReportsPage';
@@ -25,7 +29,7 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
       <div className="flex justify-center items-center min-h-screen">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading...</p>
+          <p className="mt-4 text-gray-800">Loading...</p>
         </div>
       </div>
     );
@@ -56,106 +60,124 @@ function AppContent() {
 
   return (
     <Router>
-      <MenuProvider>
-        <Toaster />
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/unauthorized" element={<UnauthorizedPage />} />
+      <IntegrationProvider>
+        <MenuProvider>
+          <Toaster />
+          <Routes>
+            <Route path="/login" element={<Login />} />
+            <Route path="/unauthorized" element={<UnauthorizedPage />} />
 
-          {/* Dashboard - Admin and Manager only */}
-          <Route path="/dashboard" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
-              <Dashboard />
-            </ProtectedRoute>
-          } />
+            {/* Dashboard - Admin and Manager only */}
+            <Route path="/dashboard" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <Dashboard />
+              </ProtectedRoute>
+            } />
 
-          {/* Menu Management - Admin and Manager only */}
-          <Route path="/menu" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
-              <MenuPage />
-            </ProtectedRoute>
-          } />
+            {/* Menu Management - Admin and Manager only */}
+            <Route path="/menu" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <MenuPage />
+              </ProtectedRoute>
+            } />
 
-          {/* Billing - Admin and Manager only */}
-          <Route path="/billing" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
-              <BillingPage />
-            </ProtectedRoute>
-          } />
+            {/* Billing - Admin and Manager only */}
+            <Route path="/billing" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <BillingPage />
+              </ProtectedRoute>
+            } />
 
-          {/* Orders - Admin and Manager only */}
-          <Route path="/orders" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
-              <OrdersPage />
-            </ProtectedRoute>
-          } />
+            {/* Orders - Admin and Manager only */}
+            <Route path="/orders" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <OrdersPage />
+              </ProtectedRoute>
+            } />
 
-          {/* Inventory - Admin and Manager only */}
-          <Route path="/inventory" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
-              <InventoryPage />
-            </ProtectedRoute>
-          } />
+            {/* Inventory - Admin and Manager only */}
+            <Route path="/inventory" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <InventoryPage />
+              </ProtectedRoute>
+            } />
 
-          {/* Reports - Admin and Manager only */}
-          <Route path="/reports" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
-              <ReportsPage />
-            </ProtectedRoute>
-          } />
+            {/* Reports - Admin and Manager only */}
+            <Route path="/reports" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <ReportsPage />
+              </ProtectedRoute>
+            } />
 
-          {/* Profit Analysis - Admin only */}
-          <Route path="/profit-analysis" element={
-            <ProtectedRoute allowedRoles={['ADMIN']}>
-              <ProfitAnalysisPage />
-            </ProtectedRoute>
-          } />
+            {/* Profit Analysis - Admin only */}
+            <Route path="/profit-analysis" element={
+              <ProtectedRoute allowedRoles={['ADMIN']}>
+                <ProfitAnalysisPage />
+              </ProtectedRoute>
+            } />
 
-          {/* Delivery - Admin and Manager only */}
-          <Route path="/delivery" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
-              <DeliveryPage />
-            </ProtectedRoute>
-          } />
+            {/* Integration Settings - Admin and Manager only */}
+            <Route path="/integration" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <IntegrationSettings />
+              </ProtectedRoute>
+            } />
 
-          {/* Pending Payments - Admin and Manager only */}
-          <Route path="/pending-payments" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
-              <PendingPaymentsPage />
-            </ProtectedRoute>
-          } />
+            {/* Platform Orders - Admin and Manager only */}
+            <Route path="/platform-orders" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <PlatformOrders />
+              </ProtectedRoute>
+            } />
 
-          {/* User Management - Admin and Manager only */}
-          <Route path="/users" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
-              <UserManagementPage />
-            </ProtectedRoute>
-          } />
+            {/* Delivery - Admin and Manager only */}
+            <Route path="/delivery" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <DeliveryPage />
+              </ProtectedRoute>
+            } />
 
-          {/* Kitchen Display - All roles (Admin, Manager, Chef) */}
-          <Route path="/kitchen" element={
-            <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER', 'CHEF']}>
-              <KitchenDisplay />
-            </ProtectedRoute>
-          } />
+            {/* Pending Payments - Admin and Manager only */}
+            <Route path="/pending-payments" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <PendingPaymentsPage />
+              </ProtectedRoute>
+            } />
 
-          {/* Default route - redirect based on role */}
-          <Route path="/" element={
-            <ProtectedRoute>
-              <DefaultRedirect />
-            </ProtectedRoute>
-          } />
-        </Routes>
-      </MenuProvider>
+            {/* User Management - Admin and Manager only */}
+            <Route path="/users" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <UserManagementPage />
+              </ProtectedRoute>
+            } />
+
+            {/* Kitchen Display - All roles (Admin, Manager, Chef) */}
+            <Route path="/kitchen" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER', 'CHEF']}>
+                <KitchenDisplay />
+              </ProtectedRoute>
+            } />
+
+            {/* Default route - redirect based on role */}
+            <Route path="/" element={
+              <ProtectedRoute>
+                <DefaultRedirect />
+              </ProtectedRoute>
+            } />
+          </Routes>
+        </MenuProvider>
+      </IntegrationProvider>
     </Router>
   );
 }
 
 function App() {
   return (
-    <AuthProvider>
-      <AppContent />
-    </AuthProvider>
+    <ErrorBoundary>
+      <AuthProvider>
+        <AppContent />
+      </AuthProvider>
+    </ErrorBoundary>
   );
 }
 

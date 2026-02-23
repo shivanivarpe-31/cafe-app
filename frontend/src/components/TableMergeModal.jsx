@@ -2,10 +2,12 @@ import React, { useState } from "react";
 import { X, Users, Link as LinkIcon, Unlink } from "lucide-react";
 import axios from "axios";
 import { showSuccess, showError } from "../utils/toast";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const TableMergeModal = ({ isOpen, onClose, tables, onTablesUpdated }) => {
   const [selectedTables, setSelectedTables] = useState([]);
   const [loading, setLoading] = useState(false);
+  const focusTrapRef = useFocusTrap(isOpen, onClose);
 
   if (!isOpen) return null;
 
@@ -78,11 +80,21 @@ const TableMergeModal = ({ isOpen, onClose, tables, onTablesUpdated }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div
+        className="bg-white rounded-2xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="table-merge-title"
+        tabIndex={-1}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900 flex items-center">
+            <h2
+              id="table-merge-title"
+              className="text-2xl font-bold text-gray-900 flex items-center"
+            >
               <LinkIcon className="w-6 h-6 mr-2 text-red-500" />
               Manage Table Merging
             </h2>
@@ -92,6 +104,7 @@ const TableMergeModal = ({ isOpen, onClose, tables, onTablesUpdated }) => {
           </div>
           <button
             onClick={onClose}
+            aria-label="Close modal"
             className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
           >
             <X className="w-6 h-6" />
@@ -138,7 +151,7 @@ const TableMergeModal = ({ isOpen, onClose, tables, onTablesUpdated }) => {
                     </div>
                     {selectedTables.includes(table.id) && (
                       <div className="mt-2">
-                        <span className="inline-block w-6 h-6 bg-blue-500 rounded-full text-white text-xs flex items-center justify-center">
+                        <span className="inline-flex w-6 h-6 bg-blue-500 rounded-full text-white text-xs items-center justify-center">
                           ✓
                         </span>
                       </div>

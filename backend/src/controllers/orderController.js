@@ -1,4 +1,5 @@
 const { prisma, Prisma } = require('../prisma');
+const config = require('../config/businessConfig');
 const {
     createInsufficientStockError,
     createNotFoundError,
@@ -6,13 +7,16 @@ const {
     createOrderStatusError,
 } = require('../utils/errors');
 
-// Generate unique bill number
+const { getPaginationParams, formatPaginatedResponse } = require('../utils/pagination');
+
+// Generate unique bill number using crypto for collision resistance
+const crypto = require('crypto');
 const generateBillNumber = () => {
     const date = new Date();
     const year = date.getFullYear().toString().slice(-2);
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    const random = crypto.randomBytes(4).toString('hex').toUpperCase(); // 8 hex chars = 4+ billion possibilities
     return `BILL${year}${month}${day}${random}`;
 };
 
@@ -125,24 +129,70 @@ exports.createOrder = async (req, res, next) => {
             throw createValidationError('tableId', 'Table is required for dine-in orders');
         }
 
-        // Calculate totals including modifications
+        // Fetch actual prices from the database (never trust client-submitted prices)
+        const menuItemIds = [...new Set(orderItems.map(item => item.menuItemId))];
+        const dbMenuItems = await prisma.menuItem.findMany({
+            where: { id: { in: menuItemIds } },
+            select: { id: true, price: true, name: true, isActive: true }
+        });
+        const menuItemPriceMap = new Map(dbMenuItems.map(m => [m.id, m]));
+
+        // Validate all menu items exist and are active
+        for (const item of orderItems) {
+            const dbItem = menuItemPriceMap.get(item.menuItemId);
+            if (!dbItem) {
+                throw createValidationError('menuItemId', `Menu item with ID ${item.menuItemId} not found`);
+            }
+            if (!dbItem.isActive) {
+                throw createValidationError('menuItemId', `Menu item "${dbItem.name}" is currently unavailable`);
+            }
+        }
+
+        // Fetch actual modification prices from the database
+        const allModIds = [...new Set(
+            orderItems.flatMap(item =>
+                (item.modifications || []).map(mod => mod.id)
+            ).filter(Boolean)
+        )];
+        let modPriceMap = new Map();
+        if (allModIds.length > 0) {
+            const dbMods = await prisma.modification.findMany({
+                where: { id: { in: allModIds } },
+                select: { id: true, price: true, name: true, isActive: true }
+            });
+            modPriceMap = new Map(dbMods.map(m => [m.id, m]));
+
+            // Validate all modifications exist and are active
+            for (const modId of allModIds) {
+                const dbMod = modPriceMap.get(modId);
+                if (!dbMod) {
+                    throw createValidationError('modificationId', `Modification with ID ${modId} not found`);
+                }
+                if (!dbMod.isActive) {
+                    throw createValidationError('modificationId', `Modification "${dbMod.name}" is currently unavailable`);
+                }
+            }
+        }
+
+        // Calculate totals using server-side prices
         let subtotal = 0;
 
         for (const item of orderItems) {
-            // Base price
-            let itemTotal = parseFloat(item.price) * item.quantity;
+            const serverPrice = parseFloat(menuItemPriceMap.get(item.menuItemId).price);
+            let itemTotal = serverPrice * item.quantity;
 
-            // Add modification charges
+            // Add modification charges using server-side prices
             if (item.modifications && item.modifications.length > 0) {
                 for (const mod of item.modifications) {
-                    itemTotal += parseFloat(mod.price || 0) * (mod.quantity || 1) * item.quantity;
+                    const serverModPrice = parseFloat(modPriceMap.get(mod.id).price);
+                    itemTotal += serverModPrice * (mod.quantity || 1) * item.quantity;
                 }
             }
 
             subtotal += itemTotal;
         }
 
-        const tax = subtotal * 0.05;
+        const tax = subtotal * config.tax.rate;
         const total = subtotal + tax;
 
         const billNumber = generateBillNumber();
@@ -167,7 +217,7 @@ exports.createOrder = async (req, res, next) => {
                     create: orderItems.map(item => ({
                         menuItemId: item.menuItemId,
                         quantity: item.quantity,
-                        price: parseFloat(item.price),
+                        price: parseFloat(menuItemPriceMap.get(item.menuItemId).price),
                         notes: item.notes || null
                     }))
                 }
@@ -202,7 +252,7 @@ exports.createOrder = async (req, res, next) => {
                                 orderItemId: createdOrderItem.id,
                                 modificationId: mod.id,
                                 quantity: mod.quantity || 1,
-                                price: parseFloat(mod.price || 0)
+                                price: parseFloat(modPriceMap.get(mod.id).price)
                             }
                         });
                     }
@@ -291,24 +341,69 @@ exports.updateOrder = async (req, res, next) => {
             );
         }
 
-        // Calculate new totals including modifications
+        // Fetch actual prices from the database (never trust client-submitted prices)
+        const menuItemIds = [...new Set(orderItems.map(item => item.menuItemId))];
+        const dbMenuItems = await prisma.menuItem.findMany({
+            where: { id: { in: menuItemIds } },
+            select: { id: true, price: true, name: true, isActive: true }
+        });
+        const menuItemPriceMap = new Map(dbMenuItems.map(m => [m.id, m]));
+
+        // Validate all menu items exist and are active
+        for (const item of orderItems) {
+            const dbItem = menuItemPriceMap.get(item.menuItemId);
+            if (!dbItem) {
+                throw createValidationError('menuItemId', `Menu item with ID ${item.menuItemId} not found`);
+            }
+            if (!dbItem.isActive) {
+                throw createValidationError('menuItemId', `Menu item "${dbItem.name}" is currently unavailable`);
+            }
+        }
+
+        // Fetch actual modification prices from the database
+        const allModIds = [...new Set(
+            orderItems.flatMap(item =>
+                (item.modifications || []).map(mod => mod.id)
+            ).filter(Boolean)
+        )];
+        let modPriceMap = new Map();
+        if (allModIds.length > 0) {
+            const dbMods = await prisma.modification.findMany({
+                where: { id: { in: allModIds } },
+                select: { id: true, price: true, name: true, isActive: true }
+            });
+            modPriceMap = new Map(dbMods.map(m => [m.id, m]));
+
+            for (const modId of allModIds) {
+                const dbMod = modPriceMap.get(modId);
+                if (!dbMod) {
+                    throw createValidationError('modificationId', `Modification with ID ${modId} not found`);
+                }
+                if (!dbMod.isActive) {
+                    throw createValidationError('modificationId', `Modification "${dbMod.name}" is currently unavailable`);
+                }
+            }
+        }
+
+        // Calculate new totals using server-side prices
         let subtotal = 0;
 
         for (const item of orderItems) {
-            // Base price
-            let itemTotal = parseFloat(item.price) * item.quantity;
+            const serverPrice = parseFloat(menuItemPriceMap.get(item.menuItemId).price);
+            let itemTotal = serverPrice * item.quantity;
 
-            // Add modification charges
+            // Add modification charges using server-side prices
             if (item.modifications && item.modifications.length > 0) {
                 for (const mod of item.modifications) {
-                    itemTotal += parseFloat(mod.price || 0) * (mod.quantity || 1) * item.quantity;
+                    const serverModPrice = parseFloat(modPriceMap.get(mod.id).price);
+                    itemTotal += serverModPrice * (mod.quantity || 1) * item.quantity;
                 }
             }
 
             subtotal += itemTotal;
         }
 
-        const tax = subtotal * 0.05;
+        const tax = subtotal * config.tax.rate;
         const total = subtotal + tax;
 
         const updatedOrder = await prisma.$transaction(async (tx) => {
@@ -344,7 +439,7 @@ exports.updateOrder = async (req, res, next) => {
                         create: orderItems.map(item => ({
                             menuItemId: item.menuItemId,
                             quantity: item.quantity,
-                            price: parseFloat(item.price),
+                            price: parseFloat(menuItemPriceMap.get(item.menuItemId).price),
                             notes: item.notes || null
                         }))
                     }
@@ -371,21 +466,23 @@ exports.updateOrder = async (req, res, next) => {
                                 orderItemId: createdOrderItem.id,
                                 modificationId: mod.id,
                                 quantity: mod.quantity || 1,
-                                price: parseFloat(mod.price || 0)
+                                price: parseFloat(modPriceMap.get(mod.id).price)
                             }
                         });
                     }
                 }
             }
 
-            // Update table current bill
-            await tx.table.update({
-                where: { id: existingOrder.tableId },
-                data: {
-                    currentBill: total,
-                    updatedAt: new Date()
-                }
-            });
+            // Update table current bill (only for dine-in orders with a table)
+            if (existingOrder.tableId) {
+                await tx.table.update({
+                    where: { id: existingOrder.tableId },
+                    data: {
+                        currentBill: total,
+                        updatedAt: new Date()
+                    }
+                });
+            }
 
             // Fetch complete updated order with modifications
             const completeOrder = await tx.order.findUnique({
@@ -419,30 +516,42 @@ exports.updateOrder = async (req, res, next) => {
 // Update getOrders to include modifications
 exports.getOrders = async (req, res, next) => {
     try {
-        const orders = await prisma.order.findMany({
-            include: {
-                table: true,
-                items: {
-                    include: {
-                        menuItem: {
-                            include: { category: true }
-                        },
-                        modifications: {
-                            include: { modification: true }
+        const { page, limit, skip } = getPaginationParams(req);
+
+        const where = {};
+        if (req.query.status) where.status = req.query.status.toUpperCase();
+        if (req.query.orderType) where.orderType = req.query.orderType.toUpperCase();
+
+        const [orders, total] = await Promise.all([
+            prisma.order.findMany({
+                where,
+                include: {
+                    table: true,
+                    items: {
+                        include: {
+                            menuItem: {
+                                include: { category: true }
+                            },
+                            modifications: {
+                                include: { modification: true }
+                            }
                         }
                     }
-                }
-            },
-            orderBy: { createdAt: 'desc' },
-            take: 50
-        });
-        res.json(orders);
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.order.count({ where })
+        ]);
+
+        res.json(formatPaginatedResponse(orders, total, page, limit));
     } catch (error) {
         next(error);
     }
 };
 
-// Get all tables
+// Get all tables for table management
 exports.getTables = async (req, res, next) => {
     try {
         const tables = await prisma.table.findMany({
@@ -461,47 +570,34 @@ exports.getTables = async (req, res, next) => {
     }
 };
 
-// Get all orders
-exports.getOrders = async (req, res, next) => {
-    try {
-        const orders = await prisma.order.findMany({
-            include: {
-                table: true,
-                items: {
-                    include: {
-                        menuItem: {
-                            include: { category: true }
-                        }
-                    }
-                }
-            },
-            orderBy: { createdAt: 'desc' },
-            take: 50
-        });
-        res.json(orders);
-    } catch (error) {
-        next(error);
-    }
-};
-
 // Get active orders
 exports.getActiveOrders = async (req, res, next) => {
     try {
-        const orders = await prisma.order.findMany({
-            where: {
-                status: { in: ['PENDING', 'PREPARING', 'SERVED'] }
-            },
-            include: {
-                table: true,
-                items: {
-                    include: {
-                        menuItem: true
+        const { page, limit, skip } = getPaginationParams(req);
+
+        const where = {
+            status: { in: ['PENDING', 'PREPARING', 'SERVED'] }
+        };
+
+        const [orders, total] = await Promise.all([
+            prisma.order.findMany({
+                where,
+                include: {
+                    table: true,
+                    items: {
+                        include: {
+                            menuItem: true
+                        }
                     }
-                }
-            },
-            orderBy: { createdAt: 'desc' }
-        });
-        res.json(orders);
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.order.count({ where })
+        ]);
+
+        res.json(formatPaginatedResponse(orders, total, page, limit));
     } catch (error) {
         next(error);
     }
@@ -550,7 +646,7 @@ exports.updateOrderStatus = async (req, res, next) => {
 
         // If order is changing to PREPARING, deduct ingredients (kitchen starts cooking)
         if (status === 'PREPARING' && existingOrder.status !== 'PREPARING') {
-            await prisma.$transaction(async (tx) => {
+            const order = await prisma.$transaction(async (tx) => {
                 // Check ingredient availability with pessimistic locking (FOR UPDATE)
                 // This prevents race conditions where two orders deduct the same inventory simultaneously
                 const missingIngredients = await checkIngredientAvailability(tx, existingOrder.items, true);
@@ -590,14 +686,30 @@ exports.updateOrderStatus = async (req, res, next) => {
                         });
                     }
                 }
+
+                // Update order status inside the same transaction
+                const updatedOrder = await tx.order.update({
+                    where: { id: orderId },
+                    data: updateData,
+                    include: {
+                        table: true,
+                        items: { include: { menuItem: true } },
+                        deliveryInfo: true
+                    }
+                });
+
+                return updatedOrder;
             });
+
+            res.json({ success: true, order, tableUpdated: !!existingOrder.tableId });
+            return;
         }
 
         // If order is being CANCELLED, refund ingredients (only if they were already deducted)
         if (status === 'CANCELLED' && existingOrder.status !== 'CANCELLED') {
-            // Only refund if order was already PREPARING, SERVED, or PAID (ingredients already deducted)
-            if (['PREPARING', 'SERVED', 'PAID'].includes(existingOrder.status)) {
-                await prisma.$transaction(async (tx) => {
+            const order = await prisma.$transaction(async (tx) => {
+                // Only refund if order was already PREPARING, SERVED, or PAID (ingredients already deducted)
+                if (['PREPARING', 'SERVED', 'PAID'].includes(existingOrder.status)) {
                     // Refund ingredients
                     for (const item of existingOrder.items) {
                         const recipe = await tx.menuItemIngredient.findMany({
@@ -641,11 +753,65 @@ exports.updateOrderStatus = async (req, res, next) => {
                             });
                         }
                     }
+                }
+
+                // Update order status inside the same transaction
+                const updatedOrder = await tx.order.update({
+                    where: { id: orderId },
+                    data: updateData,
+                    include: {
+                        table: true,
+                        items: { include: { menuItem: true } },
+                        deliveryInfo: true
+                    }
                 });
-            }
+
+                // Handle table status
+                if (existingOrder.tableId) {
+                    const activeOrdersOnTable = await tx.order.count({
+                        where: {
+                            tableId: existingOrder.tableId,
+                            status: { in: ['PENDING', 'PREPARING', 'SERVED'] },
+                            id: { not: orderId }
+                        }
+                    });
+
+                    if (activeOrdersOnTable === 0) {
+                        await tx.table.update({
+                            where: { id: existingOrder.tableId },
+                            data: {
+                                status: 'AVAILABLE',
+                                currentBill: 0,
+                                orderTime: null,
+                                customerName: null,
+                                customerPhone: null,
+                                reservedFrom: null,
+                                reservedUntil: null,
+                                updatedAt: new Date()
+                            }
+                        });
+                    }
+                }
+
+                // Update delivery status
+                if (existingOrder.deliveryInfo) {
+                    await tx.deliveryInfo.update({
+                        where: { orderId: orderId },
+                        data: {
+                            deliveryStatus: 'CANCELLED',
+                            actualTime: new Date()
+                        }
+                    });
+                }
+
+                return updatedOrder;
+            });
+
+            res.json({ success: true, order, tableUpdated: !!existingOrder.tableId });
+            return;
         }
 
-        // Update the order
+        // For all other status transitions (PENDING, SERVED, PAID) — no inventory changes needed
         const order = await prisma.order.update({
             where: { id: orderId },
             data: updateData,
@@ -704,40 +870,6 @@ exports.updateOrderStatus = async (req, res, next) => {
             order,
             tableUpdated: !!existingOrder.tableId
         });
-    } catch (error) {
-        console.error('Update order status error:', error);
-        res.status(500).json({
-            error: 'Failed to update order status',
-            details: error.message
-        });
-    }
-};
-
-// Update table status
-exports.updateTableStatus = async (req, res, next) => {
-    try {
-        const { id } = req.params;
-        const { status: rawStatus } = req.body;
-        const status = String(rawStatus || '').toUpperCase();
-
-        const updateData = { status };
-
-        if (status === 'AVAILABLE') {
-            updateData.currentBill = 0;
-            updateData.orderTime = null;
-            updateData.customerName = null;
-            updateData.customerPhone = null;
-            updateData.reservedUntil = null;
-            updateData.reservedFrom = null;
-        }
-
-        const table = await prisma.table.update({
-            where: { id: parseInt(id, 10) },
-            data: updateData,
-            include: { orders: true }
-        });
-
-        res.json(table);
     } catch (error) {
         next(error);
     }
@@ -855,28 +987,37 @@ exports.createPayLaterOrder = async (req, res, next) => {
 // Get pending payments
 exports.getPendingPayments = async (req, res, next) => {
     try {
-        const orders = await prisma.order.findMany({
-            where: {
-                OR: [
-                    { status: 'PARTIALLY_PAID' },
-                    { paymentMode: 'PAY_LATER' }
-                ]
-            },
-            include: {
-                items: {
-                    include: {
-                        menuItem: true,
-                        modifications: true
+        const { page, limit, skip } = getPaginationParams(req);
+
+        const where = {
+            OR: [
+                { status: 'PARTIALLY_PAID' },
+                { paymentMode: 'PAY_LATER' }
+            ]
+        };
+
+        const [orders, total] = await Promise.all([
+            prisma.order.findMany({
+                where,
+                include: {
+                    items: {
+                        include: {
+                            menuItem: true,
+                            modifications: true
+                        }
+                    },
+                    table: true,
+                    deliveryInfo: true,
+                    payments: {
+                        orderBy: { createdAt: 'desc' }
                     }
                 },
-                table: true,
-                deliveryInfo: true,
-                payments: {
-                    orderBy: { createdAt: 'desc' }
-                }
-            },
-            orderBy: { createdAt: 'desc' }
-        });
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.order.count({ where })
+        ]);
 
         // Calculate remaining balance for each order
         const ordersWithBalance = orders.map(order => {
@@ -895,7 +1036,8 @@ exports.getPendingPayments = async (req, res, next) => {
 
         res.json({
             success: true,
-            orders: ordersWithBalance
+            orders: ordersWithBalance,
+            pagination: formatPaginatedResponse([], total, page, limit).pagination
         });
 
     } catch (error) {

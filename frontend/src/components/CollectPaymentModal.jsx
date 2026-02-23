@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import axios from "axios";
 import {
   X,
@@ -8,14 +8,23 @@ import {
   CreditCard,
   Wallet,
 } from "lucide-react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const CollectPaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
-  const [amount, setAmount] = useState(
-    order?.remainingBalance?.toFixed(2) || "0.00",
-  );
+  const focusTrapRef = useFocusTrap(isOpen, onClose);
+  const [amount, setAmount] = useState("0.00");
   const [paymentMode, setPaymentMode] = useState("CASH");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  // Reset amount when the modal opens with a new order
+  useEffect(() => {
+    if (isOpen && order) {
+      setAmount(order.remainingBalance?.toFixed(2) || "0.00");
+      setPaymentMode("CASH");
+      setError("");
+    }
+  }, [isOpen, order]);
 
   if (!isOpen || !order) return null;
 
@@ -58,11 +67,24 @@ const CollectPaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl p-6 max-w-md w-full">
+      <div
+        className="bg-white rounded-2xl p-6 max-w-md w-full"
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="collect-payment-title"
+        tabIndex={-1}
+      >
         <div className="flex items-center justify-between mb-6">
-          <h3 className="text-xl font-bold text-gray-900">Collect Payment</h3>
+          <h3
+            id="collect-payment-title"
+            className="text-xl font-bold text-gray-900"
+          >
+            Collect Payment
+          </h3>
           <button
             onClick={onClose}
+            aria-label="Close modal"
             className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
           >
             <X className="w-6 h-6" />

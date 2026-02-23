@@ -1,30 +1,43 @@
-const { PrismaClient } = require('@prisma/client');
-const bcrypt = require('bcrypt');
+const { prisma } = require('../prisma');
+const bcrypt = require('bcryptjs');
+const { getPaginationParams, formatPaginatedResponse } = require('../utils/pagination');
 
-const prisma = new PrismaClient();
+const SALT_ROUNDS = 12;
 
 /**
  * Get all users
  */
 const getAllUsers = async (req, res, next) => {
   try {
-    const users = await prisma.user.findMany({
-      select: {
-        id: true,
-        email: true,
-        name: true,
-        role: true,
-        isActive: true,
-        createdBy: true,
-        createdAt: true,
-        updatedAt: true,
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
+    const { page, limit, skip } = getPaginationParams(req);
 
-    res.json(users);
+    const where = {};
+    if (req.query.role) where.role = req.query.role.toUpperCase();
+    if (req.query.isActive !== undefined) where.isActive = req.query.isActive === 'true';
+
+    const [users, total] = await Promise.all([
+      prisma.user.findMany({
+        where,
+        select: {
+          id: true,
+          email: true,
+          name: true,
+          role: true,
+          isActive: true,
+          createdBy: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+        orderBy: {
+          createdAt: 'desc',
+        },
+        skip,
+        take: limit,
+      }),
+      prisma.user.count({ where }),
+    ]);
+
+    res.json(formatPaginatedResponse(users, total, page, limit));
   } catch (error) {
     next(error);
   }

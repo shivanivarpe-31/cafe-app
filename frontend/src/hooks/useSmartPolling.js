@@ -8,6 +8,7 @@ import { useEffect, useRef, useCallback } from 'react';
  * - Stops polling when user switches tabs
  * - Reduces polling frequency when user is inactive
  * - Automatically resumes when user returns
+ * - Stable across renders — callers don't need to memoize the callback
  *
  * @param {Function} callback - Function to call on each poll
  * @param {number} activeInterval - Polling interval when user is active (ms)
@@ -23,6 +24,35 @@ export const useSmartPolling = (
   const intervalRef = useRef(null);
   const lastActivityRef = useRef(Date.now());
   const isActiveRef = useRef(true);
+  const callbackRef = useRef(callback);
+
+  // Always keep the ref pointing to the latest callback
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
+  // Stable function to invoke the latest callback
+  const invokeCallback = useCallback(() => {
+    callbackRef.current();
+  }, []);
+
+  // Helper to start an interval at a given rate
+  const startInterval = useCallback((interval) => {
+    if (intervalRef.current) {
+      clearInterval(intervalRef.current);
+    }
+    intervalRef.current = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        invokeCallback();
+        // Check inactivity inline
+        const timeSinceLastActivity = Date.now() - lastActivityRef.current;
+        if (timeSinceLastActivity > inactiveThreshold && isActiveRef.current) {
+          isActiveRef.current = false;
+          startInterval(inactiveInterval);
+        }
+      }
+    }, interval);
+  }, [invokeCallback, inactiveThreshold, inactiveInterval]);
 
   // Update last activity time
   const updateActivity = useCallback(() => {
@@ -31,47 +61,17 @@ export const useSmartPolling = (
     // If was inactive, become active and restart polling at faster rate
     if (!isActiveRef.current) {
       isActiveRef.current = true;
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = setInterval(() => {
-          if (document.visibilityState === 'visible') {
-            callback();
-          }
-        }, activeInterval);
-      }
+      startInterval(activeInterval);
     }
-  }, [callback, activeInterval]);
-
-  // Check if user is inactive
-  const checkInactivity = useCallback(() => {
-    const timeSinceLastActivity = Date.now() - lastActivityRef.current;
-
-    if (timeSinceLastActivity > inactiveThreshold && isActiveRef.current) {
-      // User is now inactive, slow down polling
-      isActiveRef.current = false;
-      if (intervalRef.current) {
-        clearInterval(intervalRef.current);
-        intervalRef.current = setInterval(() => {
-          if (document.visibilityState === 'visible') {
-            callback();
-          }
-        }, inactiveInterval);
-      }
-    }
-  }, [callback, inactiveThreshold, inactiveInterval]);
+  }, [activeInterval, startInterval]);
 
   useEffect(() => {
     // Start polling immediately
-    callback();
+    invokeCallback();
 
     // Set up initial interval
     const currentInterval = isActiveRef.current ? activeInterval : inactiveInterval;
-    intervalRef.current = setInterval(() => {
-      if (document.visibilityState === 'visible') {
-        callback();
-        checkInactivity();
-      }
-    }, currentInterval);
+    startInterval(currentInterval);
 
     // Track user activity
     const activityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart'];
@@ -84,10 +84,7 @@ export const useSmartPolling = (
       if (document.visibilityState === 'visible') {
         // Page became visible - poll immediately and update activity
         updateActivity();
-        callback();
-      } else {
-        // Page hidden - polling will be skipped by the interval check
-        // But interval keeps running to check visibility
+        invokeCallback();
       }
     };
     document.addEventListener('visibilitychange', handleVisibilityChange);
@@ -102,7 +99,7 @@ export const useSmartPolling = (
       });
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [callback, activeInterval, inactiveInterval, updateActivity, checkInactivity]);
+  }, [activeInterval, inactiveInterval, updateActivity, startInterval, invokeCallback]);
 
   // Return cleanup function in case component wants to manually stop polling
   return useCallback(() => {

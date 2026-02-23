@@ -13,6 +13,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { getUnitLabel } from "./IngredientComponents";
+import { useFocusTrap } from "../../hooks/useFocusTrap";
 
 /**
  * Stock Update Modal (Add Stock / Record Wastage)
@@ -29,6 +30,7 @@ export const StockModal = ({
   const [notes, setNotes] = useState("");
   const inputRef = useRef(null);
   const modalRef = useRef(null);
+  const focusTrapRef = useFocusTrap(isOpen, onClose);
 
   // Reset on open
   useEffect(() => {
@@ -87,7 +89,14 @@ export const StockModal = ({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
       <div
-        ref={modalRef}
+        ref={(el) => {
+          modalRef.current = el;
+          if (typeof focusTrapRef === "object") focusTrapRef.current = el;
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-label={isAdd ? "Add stock" : "Record wastage"}
+        tabIndex={-1}
         className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md transform animate-in zoom-in-95 duration-200"
       >
         {/* Header */}
@@ -117,6 +126,7 @@ export const StockModal = ({
           </div>
           <button
             onClick={onClose}
+            aria-label="Close modal"
             className="p-2 text-gray-400 hover:text-gray-600 hover:bg-white/50 rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
@@ -281,6 +291,7 @@ export const RecipeModal = ({
   isSaving = false,
 }) => {
   const modalRef = useRef(null);
+  const focusTrapRef = useFocusTrap(isOpen, onClose);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -318,7 +329,14 @@ export const RecipeModal = ({
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
       <div
-        ref={modalRef}
+        ref={(el) => {
+          modalRef.current = el;
+          if (typeof focusTrapRef === "object") focusTrapRef.current = el;
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="recipe-modal-title"
+        tabIndex={-1}
         className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden transform animate-in zoom-in-95 duration-200"
       >
         {/* Header */}
@@ -328,12 +346,18 @@ export const RecipeModal = ({
               <ChefHat className="w-5 h-5 text-purple-600" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-gray-900">Edit Recipe</h3>
+              <h3
+                id="recipe-modal-title"
+                className="text-lg font-bold text-gray-900"
+              >
+                Edit Recipe
+              </h3>
               <p className="text-sm text-gray-500">{menuItem.name}</p>
             </div>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close modal"
             className="p-2 text-gray-400 hover:text-gray-600 hover:bg-white/50 rounded-lg transition-colors"
           >
             <X className="w-5 h-5" />
@@ -464,6 +488,7 @@ export const RecipeModal = ({
  */
 export const LogsModal = ({ isOpen, onClose, ingredient, logs }) => {
   const modalRef = useRef(null);
+  const focusTrapRef = useFocusTrap(isOpen, onClose);
 
   useEffect(() => {
     if (!isOpen) return;
@@ -492,7 +517,14 @@ export const LogsModal = ({ isOpen, onClose, ingredient, logs }) => {
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
 
       <div
-        ref={modalRef}
+        ref={(el) => {
+          modalRef.current = el;
+          if (typeof focusTrapRef === "object") focusTrapRef.current = el;
+        }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="logs-modal-title"
+        tabIndex={-1}
         className="relative bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-hidden transform animate-in zoom-in-95 duration-200"
       >
         {/* Header */}
@@ -502,7 +534,12 @@ export const LogsModal = ({ isOpen, onClose, ingredient, logs }) => {
               <History className="w-5 h-5 text-blue-600" />
             </div>
             <div>
-              <h3 className="text-lg font-bold text-gray-900">Stock History</h3>
+              <h3
+                id="logs-modal-title"
+                className="text-lg font-bold text-gray-900"
+              >
+                Stock History
+              </h3>
               <p className="text-sm text-gray-500">{ingredient.name}</p>
             </div>
           </div>

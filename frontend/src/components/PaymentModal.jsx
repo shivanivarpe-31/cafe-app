@@ -11,8 +11,10 @@ import {
   Clock,
 } from "lucide-react";
 import SplitPaymentInterface from "./SplitPaymentInterface";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
+  const focusTrapRef = useFocusTrap(isOpen, onClose);
   const [paymentMode, setPaymentMode] = useState("CASH");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -188,14 +190,25 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-2 sm:p-4">
-      <div className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full max-h-[95vh] sm:max-h-[90vh] overflow-y-auto">
+      <div
+        className="bg-white rounded-2xl p-4 sm:p-6 max-w-md w-full max-h-[95vh] sm:max-h-[90vh] overflow-y-auto"
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="payment-modal-title"
+        tabIndex={-1}
+      >
         {/* Header */}
         <div className="flex items-center justify-between mb-4 sm:mb-6">
-          <h3 className="text-lg sm:text-xl font-bold text-gray-900">
+          <h3
+            id="payment-modal-title"
+            className="text-lg sm:text-xl font-bold text-gray-900"
+          >
             Complete Payment
           </h3>
           <button
             onClick={onClose}
+            aria-label="Close modal"
             className="p-1 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
           >
             <X className="w-5 h-5 sm:w-6 sm:h-6" />

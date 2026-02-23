@@ -8,13 +8,13 @@ export const STOCK_THRESHOLDS = {
 
 // Stock status colors
 export const STOCK_COLORS = {
-  OUT_OF_STOCK: "text-red-600",
-  LOW_STOCK: "text-orange-600",
-  IN_STOCK: "text-green-600",
+  OUT_OF_STOCK: "text-gray-800",
+  LOW_STOCK: "text-gray-800",
+  IN_STOCK: "text-gray-800",
 };
 
 // Category badge colors (can be expanded for specific categories)
-export const CATEGORY_BADGE_COLOR = "bg-purple-100 text-purple-800";
+export const CATEGORY_BADGE_COLOR = "bg-purple-100 text-gray-800";
 
 // Form validation
 export const VALIDATION = {

@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import axios from "axios";
 import { useMenu } from "../context/MenuContext";
+import config from "../config/businessConfig";
 import {
   Truck,
   ShoppingBag,
@@ -56,6 +57,8 @@ const DeliveryPage = () => {
   // Stats
   const [stats, setStats] = useState(null);
 
+  const abortControllerRef = useRef(null);
+
   // Fetch orders
   const fetchOrders = useCallback(async () => {
     try {
@@ -63,9 +66,12 @@ const DeliveryPage = () => {
       if (filterStatus !== "all") params.append("status", filterStatus);
       if (filterPlatform !== "all") params.append("platform", filterPlatform);
 
-      const res = await axios.get(`/api/delivery?${params.toString()}`);
-      setOrders(res.data);
+      const res = await axios.get(`/api/delivery?${params.toString()}`, {
+        signal: abortControllerRef.current?.signal,
+      });
+      setOrders(res.data.data || res.data);
     } catch (err) {
+      if (err.name === "CanceledError" || err.name === "AbortError") return;
       console.error("Failed to fetch orders:", err);
     }
   }, [filterStatus, filterPlatform]);
@@ -73,18 +79,25 @@ const DeliveryPage = () => {
   // Fetch stats
   const fetchStats = useCallback(async () => {
     try {
-      const res = await axios.get("/api/delivery/stats");
+      const res = await axios.get("/api/delivery/stats", {
+        signal: abortControllerRef.current?.signal,
+      });
       setStats(res.data);
     } catch (err) {
+      if (err.name === "CanceledError" || err.name === "AbortError") return;
       console.error("Failed to fetch stats:", err);
     }
   }, []);
 
   useEffect(() => {
+    abortControllerRef.current = new AbortController();
     if (activeTab === "orders") {
       fetchOrders();
       fetchStats();
     }
+    return () => {
+      abortControllerRef.current.abort();
+    };
   }, [activeTab, fetchOrders, fetchStats]);
 
   // Cart functions
@@ -128,7 +141,7 @@ const DeliveryPage = () => {
     (sum, item) => sum + item.price * item.quantity,
     0,
   );
-  const tax = subtotal * 0.05;
+  const tax = subtotal * config.tax.rate;
   const totalFees = parseFloat(deliveryFee) + parseFloat(packagingFee);
   const total = subtotal + tax + totalFees;
 
@@ -178,7 +191,7 @@ const DeliveryPage = () => {
       showSuccess(
         `${
           orderType === "TAKEAWAY" ? "Takeaway" : "Delivery"
-        } order created! Bill: ${res.data.billNumber}`
+        } order created! Bill: ${res.data.billNumber}`,
       );
 
       // Reset form
@@ -399,10 +412,12 @@ const DeliveryPage = () => {
               {/* Menu Grid */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                 {filteredItems.map((item) => (
-                  <div
+                  <button
+                    type="button"
                     key={item.id}
                     onClick={() => addToCart(item)}
-                    className="bg-white rounded-2xl shadow-sm border-2 border-gray-200 p-4 hover:shadow-lg hover:border-red-300 transition-all cursor-pointer"
+                    aria-label={`Add ${item.name} — ₹${item.price}`}
+                    className="bg-white rounded-2xl shadow-sm border-2 border-gray-200 p-4 hover:shadow-lg hover:border-red-300 transition-all cursor-pointer text-left"
                   >
                     <div className="aspect-square bg-gray-100 rounded-xl mb-3 flex items-center justify-center">
                       <span className="text-3xl">🍽️</span>
@@ -413,7 +428,7 @@ const DeliveryPage = () => {
                     <p className="text-lg font-bold text-red-600 mt-1">
                       ₹{item.price}
                     </p>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
@@ -600,8 +615,11 @@ const DeliveryPage = () => {
                     <span>₹{subtotal.toFixed(2)}</span>
                   </div>
                   <div className="flex justify-between text-sm text-gray-600">
-                    <span>Tax (5%)</span>
-                    <span>₹{tax.toFixed(2)}</span>
+                    <span>{config.tax.label}</span>
+                    <span>
+                      {config.currency.symbol}
+                      {tax.toFixed(2)}
+                    </span>
                   </div>
                   <div className="flex justify-between text-sm text-gray-600">
                     <span>Fees</span>

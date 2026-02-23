@@ -1,10 +1,15 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, {
+  useState,
+  useEffect,
+  useCallback,
+  useMemo,
+  useRef,
+} from "react";
 import axios from "axios";
 import {
   Clock,
   CheckCircle,
   XCircle,
-  AlertCircle,
   Eye,
   Printer,
   Search,
@@ -25,6 +30,7 @@ import CollectPaymentModal from "../components/CollectPaymentModal";
 import EditOrderModal from "../components/EditOrderModal";
 import { useSmartPolling } from "../hooks/useSmartPolling";
 import { showSuccess, showError } from "../utils/toast";
+import config from "../config/businessConfig";
 
 const OrdersPage = () => {
   const [orders, setOrders] = useState([]);
@@ -51,13 +57,23 @@ const OrdersPage = () => {
   const [showEditOrderModal, setShowEditOrderModal] = useState(false);
   const [selectedOrderForEdit, setSelectedOrderForEdit] = useState(null);
 
+  const abortControllerRef = useRef(null);
+
   // Define fetchOrders with useCallback before using it in useSmartPolling
   const fetchOrders = useCallback(async () => {
+    // Abort any previous in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
     try {
       setLoading(true);
-      const res = await axios.get("/api/orders");
-      setOrders(res.data);
+      const res = await axios.get("/api/orders", {
+        signal: abortControllerRef.current.signal,
+      });
+      setOrders(res.data.data || res.data);
     } catch (err) {
+      if (err.name === "CanceledError" || err.name === "AbortError") return;
       console.error("Failed to fetch orders:", err);
     } finally {
       setLoading(false);
@@ -71,6 +87,15 @@ const OrdersPage = () => {
     120000, // Poll every 2 minutes when user is inactive
     300000, // Consider user inactive after 5 minutes of no activity
   );
+
+  // Cleanup: abort in-flight request on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   useEffect(() => {
     filterOrders();
@@ -177,6 +202,12 @@ const OrdersPage = () => {
 
   const printBill = (order) => {
     const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      showError(
+        "Popup blocked — please allow popups for this site to print bills.",
+      );
+      return;
+    }
     printWindow.document.write(`
       <html>
         <head>
@@ -198,9 +229,9 @@ const OrdersPage = () => {
         </head>
         <body>
           <div class="header">
-            <h1>🍽️ CAFE POS</h1>
-            <div class="info">123 Restaurant Street, City</div>
-            <div class="info">Phone: +91 98765 43210</div>
+            <h1>🍽️ ${config.restaurant.name}</h1>
+            <div class="info">${config.restaurant.address}</div>
+            <div class="info">Phone: ${config.restaurant.phone}</div>
           </div>
           
           <div class="info"><strong>Bill No:</strong> ${order.billNumber}</div>
@@ -247,9 +278,9 @@ const OrdersPage = () => {
             <div class="total-row"><span>Subtotal:</span><span>₹${Number(
               order.subtotal,
             ).toFixed(2)}</span></div>
-            <div class="total-row"><span>GST (5%):</span><span>₹${Number(
-              order.tax,
-            ).toFixed(2)}</span></div>
+            <div class="total-row"><span>${config.tax.label}:</span><span>${
+      config.currency.symbol
+    }${Number(order.tax).toFixed(2)}</span></div>
             <div class="total-row grand-total"><span>TOTAL:</span><span>₹${Number(
               order.total,
             ).toFixed(2)}</span></div>
@@ -674,13 +705,22 @@ const OrdersPage = () => {
       {/* Order Details Modal */}
       {showDetailsModal && selectedOrder && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-2xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto">
+          <div
+            className="bg-white rounded-2xl p-6 max-w-lg w-full max-h-[90vh] overflow-y-auto"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="order-details-title"
+          >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold text-gray-900">
+              <h3
+                id="order-details-title"
+                className="text-xl font-bold text-gray-900"
+              >
                 Order #{selectedOrder.billNumber}
               </h3>
               <button
                 onClick={() => setShowDetailsModal(false)}
+                aria-label="Close modal"
                 className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100 transition-colors"
               >
                 <X className="w-5 h-5" />
@@ -737,8 +777,11 @@ const OrdersPage = () => {
                   <span>₹{Number(selectedOrder.subtotal).toFixed(0)}</span>
                 </div>
                 <div className="flex justify-between text-gray-600">
-                  <span>Tax (5%)</span>
-                  <span>₹{Number(selectedOrder.tax).toFixed(0)}</span>
+                  <span>{config.tax.label}</span>
+                  <span>
+                    {config.currency.symbol}
+                    {Number(selectedOrder.tax).toFixed(0)}
+                  </span>
                 </div>
                 <div className="flex justify-between text-xl font-bold pt-2 border-t">
                   <span>Total</span>

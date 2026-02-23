@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
 
 const MenuContext = createContext();
@@ -16,7 +16,7 @@ export const MenuProvider = ({ children }) => {
     // Memoize api instance so it doesn't change on every render
     const api = useMemo(() => {
         const instance = axios.create({
-            baseURL: 'http://localhost:5001/api',
+            baseURL: process.env.REACT_APP_API_URL || '/api',
         });
 
         instance.interceptors.request.use(
@@ -35,12 +35,21 @@ export const MenuProvider = ({ children }) => {
         return instance;
     }, []);
 
+    const abortControllerRef = useRef(null);
+
     const fetchMenu = useCallback(async () => {
+        if (abortControllerRef.current) {
+            abortControllerRef.current.abort();
+        }
+        abortControllerRef.current = new AbortController();
         setLoading(true);
         try {
-            const res = await api.get('/menu/items');
-            setMenuItems(res.data || []);
+            const res = await api.get('/menu/items', {
+                signal: abortControllerRef.current.signal,
+            });
+            setMenuItems(res.data.data || res.data || []);
         } catch (err) {
+            if (err.name === 'CanceledError' || err.name === 'AbortError') return;
             console.error('Failed to fetch menu:', err);
             setMenuItems([]);
         } finally {
@@ -49,7 +58,15 @@ export const MenuProvider = ({ children }) => {
     }, [api]);
 
     useEffect(() => {
-        fetchMenu();
+        const token = localStorage.getItem('token');
+        if (token) {
+            fetchMenu();
+        }
+        return () => {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+        };
     }, [fetchMenu]);
 
     const addItem = useCallback(async (item) => {

@@ -6,6 +6,7 @@ import React, {
   useRef,
 } from "react";
 import axios from "axios";
+import config from "../config/businessConfig";
 import {
   Package,
   Plus,
@@ -20,7 +21,6 @@ import {
   ArrowUp,
   ArrowDown,
   Boxes,
-  TrendingUp,
   DollarSign,
   Keyboard,
   LayoutGrid,
@@ -35,17 +35,13 @@ import {
   IngredientTableSkeleton,
   StatsCard,
   StatsCardSkeleton,
-  getUnitLabel,
 } from "../components/inventory/IngredientComponents";
 import {
   StockModal,
   RecipeModal,
   LogsModal,
 } from "../components/inventory/InventoryModals";
-import {
-  RecipeCard,
-  RecipeCardSkeleton,
-} from "../components/inventory/RecipeCard";
+import { RecipeCard } from "../components/inventory/RecipeCard";
 import { EmptyState } from "../components/EmptyState";
 
 const InventoryPage = () => {
@@ -98,7 +94,7 @@ const InventoryPage = () => {
     name: "",
     unit: "GRAMS",
     currentStock: "",
-    minStock: "10",
+    minStock: config.inventory.defaultMinStock.toString(),
     costPerUnit: "",
     supplier: "",
   });
@@ -114,13 +110,18 @@ const InventoryPage = () => {
     { value: "TEASPOONS", label: "Teaspoons" },
   ];
 
+  const abortControllerRef = useRef(null);
+
   // Fetch data
   const fetchIngredients = useCallback(async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
     try {
-      const res = await axios.get("/api/ingredients");
-      setIngredients(res.data);
+      const res = await axios.get("/api/ingredients", {
+        signal: abortControllerRef.current?.signal,
+      });
+      setIngredients(res.data.data || res.data);
     } catch (err) {
+      if (err.name === "CanceledError" || err.name === "AbortError") return;
       console.error("Failed to fetch ingredients:", err);
       showError("Failed to load ingredients");
     } finally {
@@ -131,9 +132,12 @@ const InventoryPage = () => {
   const fetchMenuItems = useCallback(async () => {
     try {
       // Use detailed endpoint to get recipe/ingredients data
-      const res = await axios.get("/api/menu/items/detailed");
-      setMenuItems(res.data);
+      const res = await axios.get("/api/menu/items/detailed", {
+        signal: abortControllerRef.current?.signal,
+      });
+      setMenuItems(res.data.data || res.data);
     } catch (err) {
+      if (err.name === "CanceledError" || err.name === "AbortError") return;
       console.error("Failed to fetch menu items:", err);
     }
   }, []);
@@ -145,12 +149,16 @@ const InventoryPage = () => {
   }, [fetchIngredients, fetchMenuItems]);
 
   useEffect(() => {
+    abortControllerRef.current = new AbortController();
     const loadData = async () => {
       setLoading(true);
       await Promise.all([fetchIngredients(), fetchMenuItems()]);
       setLoading(false);
     };
     loadData();
+    return () => {
+      abortControllerRef.current.abort();
+    };
   }, [fetchIngredients, fetchMenuItems]);
 
   // Ingredient CRUD
@@ -162,7 +170,7 @@ const InventoryPage = () => {
         name: form.name,
         unit: form.unit,
         currentStock: parseFloat(form.currentStock) || 0,
-        minStock: parseFloat(form.minStock) || 10,
+        minStock: parseFloat(form.minStock) || config.inventory.defaultMinStock,
         costPerUnit: parseFloat(form.costPerUnit) || 0,
         supplier: form.supplier,
       };
@@ -218,7 +226,7 @@ const InventoryPage = () => {
       name: "",
       unit: "GRAMS",
       currentStock: "",
-      minStock: "10",
+      minStock: config.inventory.defaultMinStock.toString(),
       costPerUnit: "",
       supplier: "",
     });
@@ -1090,15 +1098,22 @@ const InventoryPage = () => {
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
           <div
             className="relative bg-white rounded-2xl shadow-2xl w-full max-w-md p-6 transform animate-in zoom-in-95 duration-200"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="inventory-shortcuts-title"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-bold text-gray-900 flex items-center gap-2">
+              <h3
+                id="inventory-shortcuts-title"
+                className="text-lg font-bold text-gray-900 flex items-center gap-2"
+              >
                 <Keyboard className="w-5 h-5 text-gray-400" />
                 Keyboard Shortcuts
               </h3>
               <button
                 onClick={() => setShowKeyboardHelp(false)}
+                aria-label="Close modal"
                 className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
               >
                 <X className="w-5 h-5" />

@@ -3,11 +3,14 @@ import axios from "axios";
 import { X, Plus, Minus, Trash2, Search, ShoppingCart } from "lucide-react";
 import { useMenu } from "../context/MenuContext";
 import { showSuccess, showError } from "../utils/toast";
+import config from "../config/businessConfig";
 import ErrorDisplay from "./ErrorDisplay";
 import { formatApiError, getUserFriendlyMessage } from "../utils/errorHandler";
+import { useFocusTrap } from "../hooks/useFocusTrap";
 
 const EditOrderModal = ({ isOpen, onClose, order, onOrderUpdated }) => {
   const { menuItems } = useMenu();
+  const focusTrapRef = useFocusTrap(isOpen, onClose);
   const [cart, setCart] = useState([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [loading, setLoading] = useState(false);
@@ -82,7 +85,7 @@ const EditOrderModal = ({ isOpen, onClose, order, onOrderUpdated }) => {
     (sum, item) => sum + item.price * item.quantity,
     0,
   );
-  const tax = subtotal * 0.05;
+  const tax = subtotal * config.tax.rate;
   const total = subtotal + tax;
 
   // Update order
@@ -132,17 +135,30 @@ const EditOrderModal = ({ isOpen, onClose, order, onOrderUpdated }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div
+        className="bg-white rounded-2xl max-w-6xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="edit-order-title"
+        tabIndex={-1}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-6 border-b border-gray-200">
           <div>
-            <h2 className="text-2xl font-bold text-gray-900">Edit Order</h2>
+            <h2
+              id="edit-order-title"
+              className="text-2xl font-bold text-gray-900"
+            >
+              Edit Order
+            </h2>
             <p className="text-sm text-gray-500 mt-1">
               Order #{order.billNumber} - Table {order.table?.number}
             </p>
           </div>
           <button
             onClick={onClose}
+            aria-label="Close modal"
             className="p-2 text-gray-400 hover:text-gray-600 rounded-lg hover:bg-gray-100"
           >
             <X className="w-6 h-6" />

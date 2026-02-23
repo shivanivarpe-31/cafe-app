@@ -13,6 +13,43 @@ export const AuthProvider = ({ children }) => {
     const [user, setUser] = useState(null);
     const [loading, setLoading] = useState(true);
 
+    // Parse duration string (e.g. '8h', '30m', '1d') to milliseconds
+    const parseDuration = (str) => {
+        if (!str) return 8 * 60 * 60 * 1000; // default 8h
+        const match = str.match(/^(\d+)([smhd])$/);
+        if (!match) return 8 * 60 * 60 * 1000;
+        const val = parseInt(match[1], 10);
+        const unit = match[2];
+        const multipliers = { s: 1000, m: 60000, h: 3600000, d: 86400000 };
+        return val * (multipliers[unit] || 3600000);
+    };
+
+    // Auto-refresh timer ref
+    const refreshTimerRef = React.useRef(null);
+
+    const scheduleTokenRefresh = React.useCallback((expiresIn) => {
+        // Clear any existing timer
+        if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
+
+        const expiryMs = parseDuration(expiresIn);
+        // Refresh at 75% of the token's lifetime
+        const refreshAt = Math.max(expiryMs * 0.75, 60000); // at least 1 min
+
+        refreshTimerRef.current = setTimeout(async () => {
+            try {
+                const res = await axios.post('/api/auth/refresh');
+                if (res.data.token) {
+                    localStorage.setItem('token', res.data.token);
+                    axios.defaults.headers.common['Authorization'] = `Bearer ${res.data.token}`;
+                    // Schedule next refresh
+                    scheduleTokenRefresh(res.data.expiresIn);
+                }
+            } catch {
+                // Refresh failed — token expired or user deactivated; interceptor will handle 401
+            }
+        }, refreshAt);
+    }, []);
+
     useEffect(() => {
         let mounted = true;
 
@@ -52,6 +89,8 @@ export const AuthProvider = ({ children }) => {
                     // backend returns { user: req.user }
                     if (mounted && res?.data?.user) {
                         setUser(res.data.user);
+                        // Start auto-refresh cycle for existing token
+                        scheduleTokenRefresh(null);
                     }
                 } catch (err) {
                     // If /me failed (401 etc), interceptor already cleared token/user.
@@ -66,13 +105,14 @@ export const AuthProvider = ({ children }) => {
             setLoading(false);
         }
 
-        // Clean up interceptors on unmount
+        // Clean up interceptors and refresh timer on unmount
         return () => {
             mounted = false;
             axios.interceptors.request.eject(reqInterceptor);
             axios.interceptors.response.eject(resInterceptor);
+            if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
         };
-    }, []);
+    }, [scheduleTokenRefresh]);
 
     const login = async (email, password) => {
         const res = await axios.post('/api/auth/login', { email, password });
@@ -80,6 +120,8 @@ export const AuthProvider = ({ children }) => {
         if (token) {
             localStorage.setItem('token', token);
             axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+            // Schedule auto-refresh based on server-provided expiry
+            scheduleTokenRefresh(res.data.expiresIn);
         }
         // set user from response (backend returns { token, user })
         if (res.data.user) setUser(res.data.user);
@@ -89,6 +131,7 @@ export const AuthProvider = ({ children }) => {
     const logout = () => {
         localStorage.removeItem('token');
         delete axios.defaults.headers.common['Authorization'];
+        if (refreshTimerRef.current) clearTimeout(refreshTimerRef.current);
         setUser(null);
     };
 

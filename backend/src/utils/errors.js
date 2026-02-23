@@ -1,4 +1,5 @@
 // Structured error handling system with error codes and detailed messages
+const config = require('../config/businessConfig');
 
 class AppError extends Error {
   constructor(code, message, details = null, statusCode = 400) {
@@ -122,7 +123,7 @@ function createValidationError(field, message) {
 function createPaymentAmountError(amount, remaining) {
   return new AppError(
     ERROR_CODES.PAYMENT_EXCEEDS_BALANCE,
-    `Payment amount ₹${amount.toFixed(2)} exceeds remaining balance ₹${remaining.toFixed(2)}`,
+    `Payment amount ${config.currency.symbol}${amount.toFixed(2)} exceeds remaining balance ${config.currency.symbol}${remaining.toFixed(2)}`,
     {
       attemptedAmount: parseFloat(amount.toFixed(2)),
       remainingBalance: parseFloat(remaining.toFixed(2)),

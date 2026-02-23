@@ -1,11 +1,104 @@
 import React from "react";
 import { CheckCircle, Printer } from "lucide-react";
+import { useFocusTrap } from "../hooks/useFocusTrap";
+import config from "../config/businessConfig";
 
 const PaymentSuccess = ({ isOpen, onClose, order, paymentId }) => {
+  const focusTrapRef = useFocusTrap(isOpen, onClose);
   if (!isOpen || !order) return null;
 
   const handlePrint = () => {
-    window.print();
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+    printWindow.document.write(`
+      <html>
+        <head>
+          <title>Bill #${order.billNumber || ""}</title>
+          <style>
+            body { font-family: monospace; padding: 20px; max-width: 400px; margin: 0 auto; }
+            h1 { text-align: center; margin-bottom: 5px; font-size: 20px; }
+            .header { text-align: center; margin-bottom: 20px; border-bottom: 2px dashed #000; padding-bottom: 10px; }
+            table { width: 100%; border-collapse: collapse; margin: 15px 0; }
+            th, td { padding: 8px 4px; text-align: left; }
+            th { border-bottom: 1px solid #000; font-weight: bold; }
+            .item-row { border-bottom: 1px dashed #ccc; }
+            .totals { border-top: 2px solid #000; margin-top: 10px; padding-top: 10px; }
+            .total-row { display: flex; justify-content: space-between; padding: 5px 0; }
+            .grand-total { font-size: 18px; font-weight: bold; border-top: 2px solid #000; margin-top: 5px; padding-top: 5px; }
+            .footer { text-align: center; margin-top: 20px; border-top: 2px dashed #000; padding-top: 10px; font-size: 12px; }
+            .info { font-size: 12px; margin: 3px 0; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>🍽️ ${config.restaurant.name}</h1>
+            <div class="info">${config.restaurant.address}</div>
+            <div class="info">Phone: ${config.restaurant.phone}</div>
+          </div>
+
+          <div class="info"><strong>Bill No:</strong> ${
+            order.billNumber || ""
+          }</div>
+          <div class="info"><strong>Table:</strong> ${
+            order.table?.number || order.orderType || "N/A"
+          }</div>
+          <div class="info"><strong>Date:</strong> ${new Date(
+            order.createdAt,
+          ).toLocaleString()}</div>
+          <div class="info"><strong>Payment:</strong> ${
+            order.paymentMode?.toUpperCase() || "PENDING"
+          }</div>
+
+          <table>
+            <thead>
+              <tr>
+                <th>Item</th>
+                <th style="text-align: center;">Qty</th>
+                <th style="text-align: right;">Price</th>
+                <th style="text-align: right;">Total</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${(order.items || [])
+                .map(
+                  (item) => `
+                <tr class="item-row">
+                  <td>${item.menuItem?.name || "Item"}</td>
+                  <td style="text-align: center;">${item.quantity}</td>
+                  <td style="text-align: right;">₹${Number(item.price).toFixed(
+                    2,
+                  )}</td>
+                  <td style="text-align: right;">₹${(
+                    Number(item.price) * item.quantity
+                  ).toFixed(2)}</td>
+                </tr>
+              `,
+                )
+                .join("")}
+            </tbody>
+          </table>
+
+          <div class="totals">
+            <div class="total-row"><span>Subtotal:</span><span>₹${Number(
+              order.subtotal,
+            ).toFixed(2)}</span></div>
+            <div class="total-row"><span>${config.tax.label}:</span><span>${
+      config.currency.symbol
+    }${Number(order.tax).toFixed(2)}</span></div>
+            <div class="total-row grand-total"><span>TOTAL:</span><span>₹${Number(
+              order.total,
+            ).toFixed(2)}</span></div>
+          </div>
+
+          <div class="footer">
+            <p>Thank you for visiting!</p>
+            <p>Please come again</p>
+          </div>
+        </body>
+      </html>
+    `);
+    printWindow.document.close();
+    printWindow.print();
   };
 
   // Detect split payment
@@ -13,7 +106,14 @@ const PaymentSuccess = ({ isOpen, onClose, order, paymentId }) => {
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center">
+      <div
+        className="bg-white rounded-2xl p-8 max-w-md w-full text-center"
+        ref={focusTrapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Payment successful"
+        tabIndex={-1}
+      >
         {/* Success Icon */}
         <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
           <CheckCircle className="w-12 h-12 text-green-600" />

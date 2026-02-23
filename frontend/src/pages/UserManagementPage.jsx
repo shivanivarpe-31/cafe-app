@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { useAuth } from "../context/AuthContext";
 import axios from "axios";
 import toast from "react-hot-toast";
@@ -34,23 +34,49 @@ const UserManagementPage = () => {
     role: "MANAGER",
   });
 
-  // Fetch users on component mount
-  useEffect(() => {
-    fetchUsers();
-  }, []);
+  // Abort controller ref for cancelling in-flight requests
+  const abortControllerRef = useRef(null);
+  const mountedRef = useRef(true);
 
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
+    // Cancel any previous in-flight request
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
+
     try {
       setLoading(true);
-      const response = await axios.get("/api/users");
-      setUsers(response.data);
+      const response = await axios.get("/api/users", {
+        signal: abortControllerRef.current.signal,
+      });
+      if (mountedRef.current) {
+        setUsers(response.data.data || response.data);
+      }
     } catch (error) {
-      toast.error("Failed to fetch users");
-      console.error(error);
+      if (error.name === "CanceledError" || error.name === "AbortError") return;
+      if (mountedRef.current) {
+        toast.error("Failed to fetch users");
+        console.error(error);
+      }
     } finally {
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
     }
-  };
+  }, []);
+
+  // Fetch users on component mount
+  useEffect(() => {
+    mountedRef.current = true;
+    fetchUsers();
+    return () => {
+      mountedRef.current = false;
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, [fetchUsers]);
 
   const handleOpenModal = (mode, user = null) => {
     setModalMode(mode);
@@ -376,13 +402,22 @@ const UserManagementPage = () => {
       {/* Create/Edit User Modal */}
       {showModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full">
+          <div
+            className="bg-white rounded-lg shadow-xl max-w-md w-full"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="user-modal-title"
+          >
             <div className="flex items-center justify-between p-6 border-b">
-              <h2 className="text-xl font-bold text-gray-900">
+              <h2
+                id="user-modal-title"
+                className="text-xl font-bold text-gray-900"
+              >
                 {modalMode === "create" ? "Add New User" : "Edit User"}
               </h2>
               <button
                 onClick={handleCloseModal}
+                aria-label="Close modal"
                 className="text-gray-400 hover:text-gray-600"
               >
                 <X className="w-6 h-6" />

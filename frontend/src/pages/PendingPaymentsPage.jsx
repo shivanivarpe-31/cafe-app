@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import axios from "axios";
 import { Clock, User, Phone, MapPin, CreditCard } from "lucide-react";
 import CollectPaymentModal from "../components/CollectPaymentModal";
@@ -9,13 +9,21 @@ const PendingPaymentsPage = () => {
   const [loading, setLoading] = useState(true);
   const [selectedOrder, setSelectedOrder] = useState(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const abortControllerRef = useRef(null);
 
   // Define fetchPendingPayments with useCallback before using it in useSmartPolling
   const fetchPendingPayments = useCallback(async () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+    }
+    abortControllerRef.current = new AbortController();
     try {
-      const res = await axios.get("/api/orders/pending-payments");
+      const res = await axios.get("/api/orders/pending-payments", {
+        signal: abortControllerRef.current.signal,
+      });
       setOrders(res.data.orders);
     } catch (error) {
+      if (error.name === "CanceledError" || error.name === "AbortError") return;
       console.error("Error fetching pending payments:", error);
     } finally {
       setLoading(false);
@@ -29,6 +37,15 @@ const PendingPaymentsPage = () => {
     120000, // Poll every 2 minutes when user is inactive
     300000, // Consider user inactive after 5 minutes of no activity
   );
+
+  // Cleanup: abort in-flight request on unmount
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+      }
+    };
+  }, []);
 
   const handleCollectPayment = (order) => {
     setSelectedOrder(order);

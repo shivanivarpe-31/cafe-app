@@ -8,6 +8,7 @@ import React, {
 import axios from "axios";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
+import config from "../config/businessConfig";
 import {
   BarChart3,
   AlertTriangle,
@@ -846,7 +847,7 @@ const ReportsPage = () => {
         pdf.setFontSize(7);
         pdf.setTextColor(148, 163, 184);
         pdf.text(
-          `Cafe POS Pro - Business Report | Page ${i} of ${totalPages}`,
+          `${config.restaurant.name} - Business Report | Page ${i} of ${totalPages}`,
           margin,
           pageHeight - 8,
         );

@@ -121,13 +121,26 @@ const Dashboard = () => {
     },
   });
 
+  // Reuse a single AudioContext instance across all notification sounds
+  const audioContextRef = useRef(null);
+
   // Play notification sound
   const playNotificationSound = useCallback(() => {
     if (!soundEnabled) return;
 
     try {
-      const audioContext = new (window.AudioContext ||
-        window.webkitAudioContext)();
+      // Lazily create or resume a single AudioContext
+      if (
+        !audioContextRef.current ||
+        audioContextRef.current.state === "closed"
+      ) {
+        audioContextRef.current = new (window.AudioContext ||
+          window.webkitAudioContext)();
+      }
+      const audioContext = audioContextRef.current;
+      if (audioContext.state === "suspended") {
+        audioContext.resume();
+      }
 
       // First ding
       const oscillator = audioContext.createOscillator();
@@ -182,6 +195,18 @@ const Dashboard = () => {
     }
   }, [soundEnabled]);
 
+  // Close AudioContext on unmount
+  useEffect(() => {
+    return () => {
+      if (
+        audioContextRef.current &&
+        audioContextRef.current.state !== "closed"
+      ) {
+        audioContextRef.current.close();
+      }
+    };
+  }, []);
+
   // Fetch all dashboard data
   const fetchDashboardData = useCallback(async () => {
     if (abortControllerRef.current) {
@@ -229,7 +254,8 @@ const Dashboard = () => {
 
       // Handle delivery orders
       if (deliveryRes.status === "fulfilled") {
-        const orders = deliveryRes.value.data || [];
+        const rawData = deliveryRes.value.data;
+        const orders = rawData.data || rawData || [];
         const activeOrders = getActiveDeliveryOrders(orders);
 
         if (!isFirstLoadRef.current) {
@@ -608,10 +634,12 @@ const Dashboard = () => {
               {deliveryOrders
                 .slice(0, MAX_DELIVERY_ORDERS_PREVIEW)
                 .map((order) => (
-                  <div
+                  <button
+                    type="button"
                     key={order.id}
                     onClick={() => handleDeliveryOrderClick(order.id)}
-                    className={`relative cursor-pointer rounded-xl border-2 p-4 transition-all hover:shadow-lg hover:-translate-y-1 ${getPlatformBorder(
+                    aria-label={`View delivery order ${order.billNumber}`}
+                    className={`relative cursor-pointer rounded-xl border-2 p-4 transition-all hover:shadow-lg hover:-translate-y-1 text-left w-full ${getPlatformBorder(
                       order.deliveryInfo?.deliveryPlatform,
                     )}`}
                   >
@@ -729,7 +757,7 @@ const Dashboard = () => {
                         </span>
                       </div>
                     )}
-                  </div>
+                  </button>
                 ))}
             </div>
 
@@ -984,13 +1012,22 @@ const Dashboard = () => {
             {/* Reservation Modal */}
             {showReservationForm && (
               <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-                <div className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto">
+                <div
+                  className="bg-white rounded-2xl p-6 max-w-md w-full max-h-[90vh] overflow-y-auto"
+                  role="dialog"
+                  aria-modal="true"
+                  aria-labelledby="reservation-modal-title"
+                >
                   <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-xl font-bold text-gray-900">
+                    <h3
+                      id="reservation-modal-title"
+                      className="text-xl font-bold text-gray-900"
+                    >
                       New Reservation
                     </h3>
                     <button
                       onClick={() => setShowReservationForm(false)}
+                      aria-label="Close modal"
                       className="text-gray-400 hover:text-gray-600 p-1 rounded-lg hover:bg-gray-100"
                     >
                       <svg

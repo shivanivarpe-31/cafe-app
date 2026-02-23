@@ -1,12 +1,15 @@
 const { prisma } = require('../prisma');
+const config = require('../config/businessConfig');
+const { getPaginationParams, formatPaginatedResponse } = require('../utils/pagination');
 
-// Generate unique bill number for delivery/takeaway
+// Generate unique bill number for delivery/takeaway using crypto for collision resistance
+const crypto = require('crypto');
 const generateDeliveryBillNumber = (platform = 'DIRECT') => {
     const date = new Date();
     const year = date.getFullYear().toString().slice(-2);
     const month = String(date.getMonth() + 1).padStart(2, '0');
     const day = String(date.getDate()).padStart(2, '0');
-    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+    const random = crypto.randomBytes(4).toString('hex').toUpperCase();
 
     const prefix = {
         'DIRECT': 'DL',
@@ -28,7 +31,7 @@ const createPlatformOrder = async (platformData, platform) => {
         items,
         platformOrderId,
         deliveryFee = 0,
-        packagingFee = 10,
+        packagingFee = config.delivery.defaultPackagingFee,
         specialInstructions
     } = platformData;
 
@@ -37,7 +40,7 @@ const createPlatformOrder = async (platformData, platform) => {
         return sum + (parseFloat(item.price) * item.quantity);
     }, 0);
 
-    const tax = subtotal * 0.05;
+    const tax = subtotal * config.tax.rate;
     const total = subtotal + tax + parseFloat(deliveryFee) + parseFloat(packagingFee);
     const billNumber = generateDeliveryBillNumber(platform);
 
@@ -85,13 +88,6 @@ const createPlatformOrder = async (platformData, platform) => {
             }
         });
 
-        if (ingredient.currentStock < totalRequired) {
-            throw new Error(
-                `Insufficient stock for ${ingredient.ingredient.name}`
-            );
-        }
-
-
         // Deduct ingredients for each item
         for (const item of items) {
             const recipe = await tx.menuItemIngredient.findMany({
@@ -101,6 +97,13 @@ const createPlatformOrder = async (platformData, platform) => {
 
             for (const recipeItem of recipe) {
                 const totalRequired = recipeItem.quantity * item.quantity;
+
+                // Check if ingredient has sufficient stock
+                if (recipeItem.ingredient.currentStock < totalRequired) {
+                    throw new Error(
+                        `Insufficient stock for ${recipeItem.ingredient.name}: need ${totalRequired}, have ${recipeItem.ingredient.currentStock}`
+                    );
+                }
 
                 await tx.ingredient.update({
                     where: { id: recipeItem.ingredientId },
@@ -199,239 +202,6 @@ exports.simulateOnlineOrder = async (req, res, next) => {
     }
 };
 
-// ==========================================
-// ZOMATO WEBHOOK - Real Integration
-// ==========================================
-exports.zomatoWebhook = async (req, res, next) => {
-    try {
-        const { event, data } = req.body;
-
-        console.log('📦 Zomato webhook received:', event);
-        console.log('   Data:', JSON.stringify(data, null, 2));
-
-        // Verify webhook signature (in production)
-        // const signature = req.headers['x-zomato-signature'];
-        // if (!verifyZomatoSignature(signature, req.body)) {
-        //     return res.status(401).json({ error: 'Invalid signature' });
-        // }
-
-        switch (event) {
-            case 'order.placed':
-            case 'order.created':
-                // Map Zomato item IDs to your menu item IDs
-                // In production, you'd have a mapping table
-                const zomatoItems = data.items || [];
-
-                // Try to match items by name (simple matching)
-                const mappedItems = [];
-                for (const zItem of zomatoItems) {
-                    const menuItem = await prisma.menuItem.findFirst({
-                        where: {
-                            name: { contains: zItem.name, mode: 'insensitive' }
-                        }
-                    });
-
-                    if (menuItem) {
-                        mappedItems.push({
-                            menuItemId: menuItem.id,
-                            name: menuItem.name,
-                            quantity: zItem.quantity || 1,
-                            price: parseFloat(menuItem.price),
-                            notes: zItem.variant_name || zItem.instructions || null
-                        });
-                    }
-                }
-
-                if (mappedItems.length === 0) {
-                    console.log('⚠️ No matching menu items found for Zomato order');
-                    return res.status(400).json({ error: 'No matching menu items' });
-                }
-
-                const orderData = {
-                    customerName: data.customer?.name || 'Zomato Customer',
-                    customerPhone: data.customer?.phone || data.customer?.mobile || '',
-                    customerEmail: data.customer?.email || null,
-                    deliveryAddress: data.delivery?.address?.full_address ||
-                        data.delivery_address ||
-                        'Address not provided',
-                    items: mappedItems,
-                    platformOrderId: data.order_id || data.id,
-                    deliveryFee: parseFloat(data.delivery_fee || 0),
-                    packagingFee: parseFloat(data.packaging_fee || 10),
-                    specialInstructions: data.special_instructions || data.customer_note || null
-                };
-
-                const order = await createPlatformOrder(orderData, 'ZOMATO');
-
-                console.log(`\n🔔 NEW ZOMATO ORDER: ${order.billNumber}\n`);
-
-                return res.json({
-                    success: true,
-                    message: 'Order received',
-                    orderId: order.id,
-                    billNumber: order.billNumber
-                });
-
-            case 'order.cancelled':
-                if (data.order_id) {
-                    const existingOrder = await prisma.deliveryInfo.findFirst({
-                        where: { platformOrderId: data.order_id }
-                    });
-
-                    if (existingOrder) {
-                        await prisma.deliveryInfo.update({
-                            where: { id: existingOrder.id },
-                            data: { deliveryStatus: 'CANCELLED' }
-                        });
-
-                        await prisma.order.update({
-                            where: { id: existingOrder.orderId },
-                            data: { status: 'CANCELLED' }
-                        });
-
-                        console.log(`❌ Zomato order ${data.order_id} cancelled`);
-                    }
-                }
-                break;
-
-            case 'order.picked_up':
-                // Delivery partner picked up the order
-                if (data.order_id) {
-                    await prisma.deliveryInfo.updateMany({
-                        where: { platformOrderId: data.order_id },
-                        data: {
-                            deliveryStatus: 'OUT_FOR_DELIVERY',
-                            deliveryPartnerName: data.delivery_boy?.name || null,
-                            deliveryPartnerPhone: data.delivery_boy?.phone || null
-                        }
-                    });
-                }
-                break;
-
-            default:
-                console.log('Unhandled Zomato event:', event);
-        }
-
-        res.json({ success: true, message: 'Webhook processed' });
-
-    } catch (error) {
-        console.error('Zomato webhook error:', error);
-        res.status(500).json({ error: 'Webhook processing failed' });
-    }
-};
-
-// ==========================================
-// SWIGGY WEBHOOK - Real Integration
-// ==========================================
-exports.swiggyWebhook = async (req, res, next) => {
-    try {
-        const { event_type, payload } = req.body;
-
-        console.log('📦 Swiggy webhook received:', event_type);
-        console.log('   Payload:', JSON.stringify(payload, null, 2));
-
-        switch (event_type) {
-            case 'ORDER_PLACED':
-            case 'NEW_ORDER':
-                const swiggyItems = payload.items || payload.order_items || [];
-
-                const mappedItems = [];
-                for (const sItem of swiggyItems) {
-                    const menuItem = await prisma.menuItem.findFirst({
-                        where: {
-                            name: { contains: sItem.name || sItem.item_name, mode: 'insensitive' }
-                        }
-                    });
-
-                    if (menuItem) {
-                        mappedItems.push({
-                            menuItemId: menuItem.id,
-                            name: menuItem.name,
-                            quantity: sItem.quantity || 1,
-                            price: parseFloat(menuItem.price),
-                            notes: sItem.customizations || sItem.variant || null
-                        });
-                    }
-                }
-
-                if (mappedItems.length === 0) {
-                    console.log('⚠️ No matching menu items found for Swiggy order');
-                    return res.status(400).json({ error: 'No matching menu items' });
-                }
-
-                const orderData = {
-                    customerName: payload.customer?.name || payload.customer_name || 'Swiggy Customer',
-                    customerPhone: payload.customer?.phone || payload.customer_phone || '',
-                    customerEmail: payload.customer?.email || null,
-                    deliveryAddress: payload.delivery_address?.full_address ||
-                        payload.address ||
-                        'Address not provided',
-                    items: mappedItems,
-                    platformOrderId: payload.order_id || payload.id,
-                    deliveryFee: parseFloat(payload.delivery_charges || 0),
-                    packagingFee: parseFloat(payload.packing_charges || 10),
-                    specialInstructions: payload.instructions || payload.special_request || null
-                };
-
-                const order = await createPlatformOrder(orderData, 'SWIGGY');
-
-                console.log(`\n🔔 NEW SWIGGY ORDER: ${order.billNumber}\n`);
-
-                return res.json({
-                    success: true,
-                    orderId: order.id,
-                    billNumber: order.billNumber
-                });
-
-            case 'ORDER_CANCELLED':
-                if (payload.order_id) {
-                    const existingOrder = await prisma.deliveryInfo.findFirst({
-                        where: { platformOrderId: payload.order_id }
-                    });
-
-                    if (existingOrder) {
-                        await prisma.deliveryInfo.update({
-                            where: { id: existingOrder.id },
-                            data: { deliveryStatus: 'CANCELLED' }
-                        });
-
-                        await prisma.order.update({
-                            where: { id: existingOrder.orderId },
-                            data: { status: 'CANCELLED' }
-                        });
-                    }
-                }
-                break;
-
-            case 'ORDER_PICKED_UP':
-                if (payload.order_id) {
-                    await prisma.deliveryInfo.updateMany({
-                        where: { platformOrderId: payload.order_id },
-                        data: {
-                            deliveryStatus: 'OUT_FOR_DELIVERY',
-                            deliveryPartnerName: payload.delivery_executive?.name || null,
-                            deliveryPartnerPhone: payload.delivery_executive?.phone || null
-                        }
-                    });
-                }
-                break;
-
-            default:
-                console.log('Unhandled Swiggy event:', event_type);
-        }
-
-        res.json({ success: true });
-
-    } catch (error) {
-        console.error('Swiggy webhook error:', error);
-        res.status(500).json({ error: 'Webhook processing failed' });
-    }
-};
-
-// ==========================================
-// EXISTING ENDPOINTS (keep all existing code)
-// ==========================================
-
 // Create takeaway order (manual entry)
 exports.createTakeawayOrder = async (req, res, next) => {
     try {
@@ -451,17 +221,54 @@ exports.createTakeawayOrder = async (req, res, next) => {
             });
         }
 
+        // Fetch actual prices from the database (never trust client-submitted prices)
+        const menuItemIds = [...new Set(orderItems.map(item => item.menuItemId))];
+        const dbMenuItems = await prisma.menuItem.findMany({
+            where: { id: { in: menuItemIds } },
+            select: { id: true, price: true, name: true, isActive: true }
+        });
+        const menuItemPriceMap = new Map(dbMenuItems.map(m => [m.id, m]));
+
+        // Validate all menu items exist and are active
+        for (const item of orderItems) {
+            const dbItem = menuItemPriceMap.get(item.menuItemId);
+            if (!dbItem) {
+                return res.status(400).json({ error: `Menu item with ID ${item.menuItemId} not found` });
+            }
+            if (!dbItem.isActive) {
+                return res.status(400).json({ error: `Menu item "${dbItem.name}" is currently unavailable` });
+            }
+        }
+
+        // Fetch actual modification prices from the database
+        const allModIds = [...new Set(
+            orderItems.flatMap(item =>
+                (item.modifications || []).map(mod => mod.id)
+            ).filter(Boolean)
+        )];
+        let modPriceMap = new Map();
+        if (allModIds.length > 0) {
+            const dbMods = await prisma.modification.findMany({
+                where: { id: { in: allModIds } },
+                select: { id: true, price: true, name: true, isActive: true }
+            });
+            modPriceMap = new Map(dbMods.map(m => [m.id, m]));
+        }
+
+        // Calculate totals using server-side prices
         const subtotal = orderItems.reduce((sum, item) => {
-            let itemTotal = parseFloat(item.price) * item.quantity;
+            const serverPrice = parseFloat(menuItemPriceMap.get(item.menuItemId).price);
+            let itemTotal = serverPrice * item.quantity;
             if (item.modifications) {
                 for (const mod of item.modifications) {
-                    itemTotal += parseFloat(mod.price || 0) * (mod.quantity || 1) * item.quantity;
+                    const serverModPrice = modPriceMap.has(mod.id) ? parseFloat(modPriceMap.get(mod.id).price) : 0;
+                    itemTotal += serverModPrice * (mod.quantity || 1) * item.quantity;
                 }
             }
             return sum + itemTotal;
         }, 0);
 
-        const tax = subtotal * 0.05;
+        const tax = subtotal * config.tax.rate;
         const total = subtotal + tax + parseFloat(packagingFee);
         const billNumber = generateDeliveryBillNumber('TAKEAWAY');
 
@@ -479,7 +286,7 @@ exports.createTakeawayOrder = async (req, res, next) => {
                         create: orderItems.map(item => ({
                             menuItemId: item.menuItemId,
                             quantity: item.quantity,
-                            price: parseFloat(item.price),
+                            price: parseFloat(menuItemPriceMap.get(item.menuItemId).price),
                             notes: item.notes || null
                         }))
                     },
@@ -545,17 +352,54 @@ exports.createDeliveryOrder = async (req, res, next) => {
             });
         }
 
+        // Fetch actual prices from the database (never trust client-submitted prices)
+        const menuItemIds = [...new Set(orderItems.map(item => item.menuItemId))];
+        const dbMenuItems = await prisma.menuItem.findMany({
+            where: { id: { in: menuItemIds } },
+            select: { id: true, price: true, name: true, isActive: true }
+        });
+        const menuItemPriceMap = new Map(dbMenuItems.map(m => [m.id, m]));
+
+        // Validate all menu items exist and are active
+        for (const item of orderItems) {
+            const dbItem = menuItemPriceMap.get(item.menuItemId);
+            if (!dbItem) {
+                return res.status(400).json({ error: `Menu item with ID ${item.menuItemId} not found` });
+            }
+            if (!dbItem.isActive) {
+                return res.status(400).json({ error: `Menu item "${dbItem.name}" is currently unavailable` });
+            }
+        }
+
+        // Fetch actual modification prices from the database
+        const allModIds = [...new Set(
+            orderItems.flatMap(item =>
+                (item.modifications || []).map(mod => mod.id)
+            ).filter(Boolean)
+        )];
+        let modPriceMap = new Map();
+        if (allModIds.length > 0) {
+            const dbMods = await prisma.modification.findMany({
+                where: { id: { in: allModIds } },
+                select: { id: true, price: true, name: true, isActive: true }
+            });
+            modPriceMap = new Map(dbMods.map(m => [m.id, m]));
+        }
+
+        // Calculate totals using server-side prices
         const subtotal = orderItems.reduce((sum, item) => {
-            let itemTotal = parseFloat(item.price) * item.quantity;
+            const serverPrice = parseFloat(menuItemPriceMap.get(item.menuItemId).price);
+            let itemTotal = serverPrice * item.quantity;
             if (item.modifications) {
                 for (const mod of item.modifications) {
-                    itemTotal += parseFloat(mod.price || 0) * (mod.quantity || 1) * item.quantity;
+                    const serverModPrice = modPriceMap.has(mod.id) ? parseFloat(modPriceMap.get(mod.id).price) : 0;
+                    itemTotal += serverModPrice * (mod.quantity || 1) * item.quantity;
                 }
             }
             return sum + itemTotal;
         }, 0);
 
-        const tax = subtotal * 0.05;
+        const tax = subtotal * config.tax.rate;
         const total = subtotal + tax + parseFloat(deliveryFee) + parseFloat(packagingFee);
         const billNumber = generateDeliveryBillNumber(platform);
 
@@ -573,7 +417,7 @@ exports.createDeliveryOrder = async (req, res, next) => {
                         create: orderItems.map(item => ({
                             menuItemId: item.menuItemId,
                             quantity: item.quantity,
-                            price: parseFloat(item.price),
+                            price: parseFloat(menuItemPriceMap.get(item.menuItemId).price),
                             notes: item.notes || null
                         }))
                     },
@@ -623,6 +467,7 @@ exports.createDeliveryOrder = async (req, res, next) => {
 exports.getDeliveryOrders = async (req, res, next) => {
     try {
         const { type, platform, status, date } = req.query;
+        const { page, limit, skip } = getPaginationParams(req);
 
         const where = {
             orderType: { in: ['DELIVERY', 'TAKEAWAY'] }
@@ -644,28 +489,33 @@ exports.getDeliveryOrders = async (req, res, next) => {
             where.createdAt = { gte: startDate, lte: endDate };
         }
 
-        let orders = await prisma.order.findMany({
-            where,
-            include: {
-                items: {
-                    include: {
-                        menuItem: { include: { category: true } },
-                        modifications: { include: { modification: true } }
-                    }
-                },
-                deliveryInfo: true
-            },
-            orderBy: { createdAt: 'desc' }
-        });
-
+        // Filter by platform via deliveryInfo relation
         if (platform) {
-            orders = orders.filter(
-                o => o.deliveryInfo?.deliveryPlatform === platform.toUpperCase()
-            );
+            where.deliveryInfo = {
+                deliveryPlatform: platform.toUpperCase()
+            };
         }
 
-        res.json(orders);
+        const [orders, total] = await Promise.all([
+            prisma.order.findMany({
+                where,
+                include: {
+                    items: {
+                        include: {
+                            menuItem: { include: { category: true } },
+                            modifications: { include: { modification: true } }
+                        }
+                    },
+                    deliveryInfo: true
+                },
+                orderBy: { createdAt: 'desc' },
+                skip,
+                take: limit
+            }),
+            prisma.order.count({ where })
+        ]);
 
+        res.json(formatPaginatedResponse(orders, total, page, limit));
     } catch (error) {
         console.error('Get delivery orders error:', error);
         next(error);
@@ -677,6 +527,19 @@ exports.updateDeliveryStatus = async (req, res, next) => {
     try {
         const { id } = req.params;
         const { deliveryStatus, deliveryPartnerName, deliveryPartnerPhone, actualTime } = req.body;
+
+        if (!id || isNaN(parseInt(id, 10))) {
+            return res.status(400).json({ error: 'Valid order ID is required' });
+        }
+
+        const validStatuses = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'];
+        const normalizedStatus = deliveryStatus?.toUpperCase();
+        if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
+            return res.status(400).json({
+                error: 'Invalid delivery status',
+                validStatuses
+            });
+        }
 
         const deliveryInfo = await prisma.deliveryInfo.update({
             where: { orderId: parseInt(id, 10) },
