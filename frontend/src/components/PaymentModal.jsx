@@ -19,12 +19,8 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showSplitInterface, setShowSplitInterface] = useState(false);
-  const [showPayLaterForm, setShowPayLaterForm] = useState(false);
-  const [payLaterDetails, setPayLaterDetails] = useState({
-    name: "",
-    phone: "",
-    address: "",
-  });
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
 
   // Set default payment mode based on order type
   useEffect(() => {
@@ -39,6 +35,10 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
       } else {
         setPaymentMode("CASH");
       }
+      // Pre-fill from existing order customer if present
+      setCustomerName(order.customer?.name || "");
+      setCustomerPhone(order.customer?.phone || "");
+      setError("");
     }
   }, [order, isOpen]);
 
@@ -102,6 +102,8 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
       await axios.put(`/api/orders/${order.id}/status`, {
         status: "PAID",
         paymentMode: mode,
+        customerName: customerName.trim() || undefined,
+        customerPhone: customerPhone.replace(/\D/g, "") || undefined,
       });
 
       onPaymentSuccess({
@@ -125,6 +127,8 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
       const res = await axios.post("/api/payment/split", {
         orderId: order.id,
         payments: splitPayments,
+        customerName: customerName.trim() || undefined,
+        customerPhone: customerPhone.replace(/\D/g, "") || undefined,
       });
 
       if (res.data.success) {
@@ -148,19 +152,11 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
     setLoading(true);
     setError("");
 
-    // Validation
-    if (!payLaterDetails.name || !payLaterDetails.phone) {
-      setError("Please enter customer name and phone number");
-      setLoading(false);
-      return;
-    }
-
     try {
       const res = await axios.post("/api/orders/pay-later", {
         orderId: order.id,
-        customerName: payLaterDetails.name,
-        customerPhone: payLaterDetails.phone,
-        customerAddress: payLaterDetails.address,
+        customerName: customerName.trim() || undefined,
+        customerPhone: customerPhone.replace(/\D/g, "") || undefined,
       });
 
       if (res.data.success) {
@@ -240,6 +236,41 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
             </span>
           </div>
         </div>
+
+        {/* Customer Details */}
+        {!isPlatformDelivery && (
+          <div className="mb-5 p-4 bg-blue-50 border border-blue-100 rounded-xl">
+            <p className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-3">
+              Customer Details
+            </p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">Name</label>
+                <input
+                  type="text"
+                  value={customerName}
+                  onChange={(e) => setCustomerName(e.target.value)}
+                  placeholder="e.g. Rahul Sharma"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">
+                  Mobile
+                </label>
+                <input
+                  type="tel"
+                  value={customerPhone}
+                  onChange={(e) => setCustomerPhone(e.target.value)}
+                  placeholder="10-digit number"
+                  maxLength={10}
+                  inputMode="numeric"
+                  className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"
+                />
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Platform Order Info Banner */}
         {isPlatformDelivery && (
@@ -405,11 +436,12 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
             {/* Pay Later */}
             {isMethodAvailable("PAY_LATER") && (
               <button
-                onClick={() => {
-                  setPaymentMode("PAY_LATER");
-                  setShowPayLaterForm(true);
-                }}
-                className="p-4 rounded-xl border-2 border-indigo-200 hover:border-indigo-300 bg-gradient-to-r from-indigo-50 to-blue-50 transition-all flex flex-col items-center space-y-2"
+                onClick={() => setPaymentMode("PAY_LATER")}
+                className={`p-4 rounded-xl border-2 transition-all flex flex-col items-center space-y-2 ${
+                  paymentMode === "PAY_LATER"
+                    ? "border-indigo-500 bg-indigo-50"
+                    : "border-indigo-200 hover:border-indigo-300 bg-gradient-to-r from-indigo-50 to-blue-50"
+                }`}
               >
                 <Clock className="w-6 h-6 text-indigo-600" />
                 <span className="text-sm font-medium text-indigo-600">
@@ -422,53 +454,6 @@ const PaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
             )}
           </div>
         </div>
-
-        {/* Pay Later Customer Details Form */}
-        {showPayLaterForm && (
-          <div className="mb-6 p-4 bg-indigo-50 rounded-xl border border-indigo-200">
-            <h4 className="text-sm font-semibold text-gray-900 mb-3">
-              Customer Details
-            </h4>
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder="Customer Name *"
-                value={payLaterDetails.name}
-                onChange={(e) =>
-                  setPayLaterDetails({
-                    ...payLaterDetails,
-                    name: e.target.value,
-                  })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
-              />
-              <input
-                type="tel"
-                placeholder="Phone Number *"
-                value={payLaterDetails.phone}
-                onChange={(e) =>
-                  setPayLaterDetails({
-                    ...payLaterDetails,
-                    phone: e.target.value,
-                  })
-                }
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
-              />
-              <textarea
-                placeholder="Address (Optional)"
-                value={payLaterDetails.address}
-                onChange={(e) =>
-                  setPayLaterDetails({
-                    ...payLaterDetails,
-                    address: e.target.value,
-                  })
-                }
-                rows="2"
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
-              />
-            </div>
-          </div>
-        )}
 
         {/* Split Payment Interface */}
         {showSplitInterface && (

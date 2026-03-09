@@ -1,0 +1,10 @@
+{
+  "sendTime": "22:00",
+  "enabled": true,
+  "emailEnabled": true,
+  "emailTo": [
+    "pranoti.varpe@mitwpu.edu.in"
+  ],
+  "whatsappEnabled": false,
+  "whatsappTo": []
+}

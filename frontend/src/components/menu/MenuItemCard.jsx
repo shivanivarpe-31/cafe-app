@@ -7,31 +7,21 @@ import {
   ToggleRight,
   RefreshCw,
   Package,
-  PackagePlus,
+  FlaskConical,
+  CheckCircle2,
 } from "lucide-react";
-import {
-  getStockColor,
-  formatPrice,
-  hasLowStock,
-} from "../../utils/menuHelpers";
+import { formatPrice, getLowStockIngredients } from "../../utils/menuHelpers";
 
 /**
  * Menu Item Card for Grid View
  * Memoized for performance optimization
  */
 export const MenuItemCard = memo(
-  ({
-    item,
-    onEdit,
-    onDelete,
-    onToggleActive,
-    onUpdateStock,
-    isDeleting,
-    isToggling,
-  }) => {
-    const stockQty = item.inventory?.quantity ?? 0;
+  ({ item, onEdit, onDelete, onToggleActive, isDeleting, isToggling }) => {
     const isActive = item.isActive !== false;
-    const showLowStock = hasLowStock(item);
+    const hasIngredients = item.ingredients?.length > 0;
+    const lowIngredients = getLowStockIngredients(item);
+    const hasLow = lowIngredients.length > 0;
 
     return (
       <div
@@ -39,14 +29,24 @@ export const MenuItemCard = memo(
           !isActive ? "opacity-60 bg-gray-50/50" : ""
         }`}
       >
-        {/* Card Header with Status */}
+        {/* Card Header */}
         <div className="relative p-5 pb-3">
-          {/* Status Badge */}
+          {/* Status Badges */}
           <div className="absolute top-3 right-3 flex items-center gap-2">
-            {showLowStock && (
-              <span className="flex items-center gap-1 px-2 py-1 bg-orange-50 text-orange-600 text-xs font-medium rounded-full">
+            {hasIngredients && hasLow && (
+              <span
+                className="flex items-center gap-1 px-2 py-1 bg-orange-50 text-orange-600 text-xs font-medium rounded-full cursor-help"
+                title={lowIngredients
+                  .map(
+                    (i) =>
+                      `${i.name}: ${i.currentStock} / min ${i.minStock} ${
+                        i.unit?.toLowerCase() ?? ""
+                      }`,
+                  )
+                  .join(" | ")}
+              >
                 <AlertCircle className="w-3 h-3" />
-                Low Stock
+                Low Ingredient{lowIngredients.length > 1 ? "s" : ""}
               </span>
             )}
             {!isActive && (
@@ -73,28 +73,71 @@ export const MenuItemCard = memo(
           )}
         </div>
 
-        {/* Price & Stock Section */}
-        <div className="px-5 py-4 bg-gray-50/50 border-t border-gray-100">
-          <div className="flex items-center justify-between mb-4">
+        {/* Price + Ingredient status + Actions */}
+        <div className="px-5 py-4 bg-gray-50/50 border-t border-gray-100 space-y-3">
+          {/* Price row */}
+          <div className="flex items-center justify-between">
             <span className="text-2xl font-bold text-red-600">
               {formatPrice(item.price)}
             </span>
-            <button
-              onClick={() => onUpdateStock(item)}
-              className="flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
-              title="Update stock"
-            >
-              <span
-                className={`font-semibold text-sm ${getStockColor(
-                  stockQty,
-                  item.inventory?.lowStock,
-                )}`}
+
+            {/* Ingredient health pill */}
+            {hasIngredients && (
+              <div
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold ${
+                  hasLow
+                    ? "bg-orange-50 text-orange-700 border border-orange-200"
+                    : "bg-green-50 text-green-700 border border-green-200"
+                }`}
+                title={
+                  hasLow
+                    ? lowIngredients
+                        .map(
+                          (i) =>
+                            `${i.name}: ${i.currentStock} / min ${i.minStock} ${
+                              i.unit?.toLowerCase() ?? ""
+                            }`,
+                        )
+                        .join("\n")
+                    : "All ingredients are sufficiently stocked"
+                }
               >
-                {stockQty} units
-              </span>
-              <PackagePlus className="w-4 h-4 text-gray-400" />
-            </button>
+                {hasLow ? (
+                  <AlertCircle className="w-3.5 h-3.5" />
+                ) : (
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                )}
+                <FlaskConical className="w-3.5 h-3.5" />
+                {hasLow
+                  ? `${lowIngredients.length} ingredient${
+                      lowIngredients.length > 1 ? "s" : ""
+                    } low`
+                  : `${item.ingredients.length} ok`}
+              </div>
+            )}
           </div>
+
+          {/* Low ingredient chips */}
+          {hasIngredients && hasLow && (
+            <div className="px-3 py-2 bg-orange-50 border border-orange-100 rounded-xl">
+              <p className="text-[11px] font-semibold text-orange-700 mb-1">
+                Low stock:
+              </p>
+              <div className="flex flex-wrap gap-1">
+                {lowIngredients.map((ing) => (
+                  <span
+                    key={ing.id}
+                    className="text-[10px] px-1.5 py-0.5 bg-orange-100 text-orange-800 rounded-md font-medium"
+                    title={`Current: ${ing.currentStock} | Min: ${
+                      ing.minStock
+                    } ${ing.unit?.toLowerCase() ?? ""}`}
+                  >
+                    {ing.name}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Actions */}
           <div className="flex items-center gap-2">
@@ -153,18 +196,11 @@ MenuItemCard.displayName = "MenuItemCard";
  * Memoized for performance optimization
  */
 export const MenuItemRow = memo(
-  ({
-    item,
-    onEdit,
-    onDelete,
-    onToggleActive,
-    onUpdateStock,
-    isDeleting,
-    isToggling,
-  }) => {
-    const stockQty = item.inventory?.quantity ?? 0;
+  ({ item, onEdit, onDelete, onToggleActive, isDeleting, isToggling }) => {
     const isActive = item.isActive !== false;
-    const showLowStock = hasLowStock(item);
+    const hasIngredients = item.ingredients?.length > 0;
+    const lowIngredients = getLowStockIngredients(item);
+    const hasLow = lowIngredients.length > 0;
 
     return (
       <tr
@@ -199,25 +235,65 @@ export const MenuItemRow = memo(
             {formatPrice(item.price)}
           </span>
         </td>
+        {/* Ingredient stock column */}
         <td className="px-6 py-4">
-          <button
-            onClick={() => onUpdateStock(item)}
-            className="flex items-center justify-center gap-2 mx-auto px-3 py-1.5 rounded-lg hover:bg-gray-100 transition-colors group/stock"
-            title="Click to update stock"
-          >
-            {showLowStock && (
-              <AlertCircle className="w-4 h-4 text-orange-500" />
-            )}
-            <span
-              className={`font-semibold ${getStockColor(
-                stockQty,
-                item.inventory?.lowStock,
-              )}`}
-            >
-              {stockQty}
+          {hasIngredients ? (
+            <div className="flex flex-col items-center gap-1">
+              <div
+                className={`flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold ${
+                  hasLow
+                    ? "bg-orange-100 text-orange-700"
+                    : "bg-green-100 text-green-700"
+                }`}
+                title={
+                  hasLow
+                    ? lowIngredients
+                        .map(
+                          (i) =>
+                            `${i.name}: ${i.currentStock} / min ${i.minStock} ${
+                              i.unit?.toLowerCase() ?? ""
+                            }`,
+                        )
+                        .join(" | ")
+                    : "All ingredients are sufficiently stocked"
+                }
+              >
+                {hasLow ? (
+                  <AlertCircle className="w-3 h-3" />
+                ) : (
+                  <CheckCircle2 className="w-3 h-3" />
+                )}
+                <FlaskConical className="w-3 h-3" />
+                {hasLow
+                  ? `${lowIngredients.length}/${item.ingredients.length} low`
+                  : `${item.ingredients.length} ok`}
+              </div>
+              {hasLow && (
+                <div className="flex flex-wrap justify-center gap-0.5 max-w-[130px]">
+                  {lowIngredients.slice(0, 2).map((ing) => (
+                    <span
+                      key={ing.id}
+                      className="text-[9px] px-1 py-0.5 bg-orange-50 text-orange-700 rounded font-medium truncate max-w-[62px]"
+                      title={`${ing.name}: ${ing.currentStock} / min ${
+                        ing.minStock
+                      } ${ing.unit?.toLowerCase() ?? ""}`}
+                    >
+                      {ing.name}
+                    </span>
+                  ))}
+                  {lowIngredients.length > 2 && (
+                    <span className="text-[9px] px-1 py-0.5 bg-orange-50 text-orange-600 rounded">
+                      +{lowIngredients.length - 2}
+                    </span>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <span className="block text-center text-xs text-gray-400 italic">
+              No recipe set
             </span>
-            <PackagePlus className="w-4 h-4 text-gray-400 opacity-0 group-hover/stock:opacity-100 transition-opacity" />
-          </button>
+          )}
         </td>
         <td className="px-6 py-4">
           <button

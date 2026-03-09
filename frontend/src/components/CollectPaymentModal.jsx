@@ -16,6 +16,8 @@ const CollectPaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
   const [paymentMode, setPaymentMode] = useState("CASH");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [customerName, setCustomerName] = useState("");
+  const [customerPhone, setCustomerPhone] = useState("");
 
   // Reset amount when the modal opens with a new order
   useEffect(() => {
@@ -23,6 +25,36 @@ const CollectPaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
       setAmount(order.remainingBalance?.toFixed(2) || "0.00");
       setPaymentMode("CASH");
       setError("");
+
+      // 1st choice: Customer model (linked via customerId)
+      // 2nd choice: DeliveryInfo (stored by createPayLaterOrder for older records)
+      // 3rd choice: parse the PAY_LATER payment notes JSON
+      const fromCustomer = order.customer;
+      const fromDelivery = order.deliveryInfo;
+      let fromNotes = null;
+      if (!fromCustomer && !fromDelivery?.customerName) {
+        const payLaterPayment = (order.payments || []).find(
+          (p) => p.paymentMode === "PAY_LATER",
+        );
+        if (payLaterPayment?.notes) {
+          try {
+            fromNotes = JSON.parse(payLaterPayment.notes);
+          } catch (_) {}
+        }
+      }
+
+      setCustomerName(
+        fromCustomer?.name ||
+          fromDelivery?.customerName ||
+          fromNotes?.customerName ||
+          "",
+      );
+      setCustomerPhone(
+        fromCustomer?.phone ||
+          fromDelivery?.customerPhone ||
+          fromNotes?.customerPhone ||
+          "",
+      );
     }
   }, [isOpen, order]);
 
@@ -53,6 +85,8 @@ const CollectPaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
         orderId: order.id,
         amount: parseFloat(amount),
         paymentMode,
+        customerName: customerName.trim() || undefined,
+        customerPhone: customerPhone.replace(/\D/g, "") || undefined,
       });
 
       if (res.data.success) {
@@ -92,11 +126,23 @@ const CollectPaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
         </div>
 
         {/* Order Info */}
-        <div className="bg-gray-50 rounded-xl p-4 mb-6">
+        <div className="bg-gray-50 rounded-xl p-4 mb-4">
           <div className="flex justify-between mb-2">
             <span className="text-sm text-gray-600">Bill Number</span>
             <span className="font-semibold">{order.billNumber}</span>
           </div>
+          {order.customerName && (
+            <div className="flex justify-between mb-2">
+              <span className="text-sm text-gray-600">Customer</span>
+              <span className="font-semibold">{order.customerName}</span>
+            </div>
+          )}
+          {order.customerPhone && (
+            <div className="flex justify-between mb-2">
+              <span className="text-sm text-gray-600">Mobile</span>
+              <span className="font-semibold">{order.customerPhone}</span>
+            </div>
+          )}
           <div className="flex justify-between mb-2">
             <span className="text-sm text-gray-600">Total Amount</span>
             <span className="font-semibold">
@@ -114,6 +160,37 @@ const CollectPaymentModal = ({ isOpen, onClose, order, onPaymentSuccess }) => {
             <span className="font-bold text-orange-600">
               ₹{order.remainingBalance.toFixed(2)}
             </span>
+          </div>
+        </div>
+
+        {/* Customer Details */}
+        <div className="mb-4 p-4 bg-blue-50 border border-blue-100 rounded-xl">
+          <p className="text-xs font-bold text-blue-700 uppercase tracking-wider mb-3">
+            Customer Details
+          </p>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Name</label>
+              <input
+                type="text"
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                placeholder="e.g. Rahul Sharma"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-500 mb-1">Mobile</label>
+              <input
+                type="tel"
+                value={customerPhone}
+                onChange={(e) => setCustomerPhone(e.target.value)}
+                placeholder="10-digit number"
+                maxLength={10}
+                inputMode="numeric"
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </div>
           </div>
         </div>
 

@@ -134,46 +134,4 @@ export const integrationAPI = {
     }
 };
 
-/**
- * Error handler utility
- */
-export const handleAPIError = (error) => {
-    if (error.status === 401) {
-        // Redirect to login
-        localStorage.removeItem('token');
-        window.location.href = '/login';
-    }
-
-    return error.data?.message || error.message || 'An error occurred';
-};
-
-/**
- * Retry logic for failed requests
- */
-export const apiCallWithRetry = async (endpoint, options = {}, maxRetries = 3) => {
-    let lastError;
-
-    for (let attempt = 0; attempt < maxRetries; attempt++) {
-        try {
-            return await apiCall(endpoint, options);
-        } catch (error) {
-            lastError = error;
-
-            // Only retry on network errors or 5xx errors
-            if (error.status && error.status < 500) {
-                throw error;
-            }
-
-            // Exponential backoff
-            if (attempt < maxRetries - 1) {
-                await new Promise(resolve =>
-                    setTimeout(resolve, Math.pow(2, attempt) * 1000)
-                );
-            }
-        }
-    }
-
-    throw lastError;
-};
-
 export default apiCall;

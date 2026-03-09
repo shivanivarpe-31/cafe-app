@@ -175,6 +175,101 @@ exports.updateMenuItem = async (req, res, next) => {
     }
 };
 
+// Recipe Costing & Live Margin Calculator
+// Returns every active menu item enriched with ingredient cost, profit, and margin
+exports.getRecipeCosting = async (req, res, next) => {
+    try {
+        const items = await prisma.menuItem.findMany({
+            where: { isActive: true },
+            include: {
+                category: true,
+                ingredients: {
+                    include: {
+                        ingredient: true   // brings costPerUnit, unit, name
+                    }
+                }
+            },
+            orderBy: { name: 'asc' }
+        });
+
+        const result = items.map(item => {
+            const sellingPrice = parseFloat(item.price);
+
+            // Sum ingredient costs: costPerUnit × qty used per dish
+            const ingredientLines = item.ingredients.map(rel => {
+                const unitCost = parseFloat(rel.ingredient.costPerUnit ?? 0);
+                const qtyUsed = parseFloat(rel.quantity ?? 0);
+                const lineCost = unitCost * qtyUsed;
+                return {
+                    ingredientId: rel.ingredientId,
+                    name: rel.ingredient.name,
+                    unit: rel.ingredient.unit,
+                    qtyUsed,
+                    costPerUnit: unitCost,
+                    lineCost: parseFloat(lineCost.toFixed(4))
+                };
+            });
+
+            const totalIngredientCost = ingredientLines.reduce((s, l) => s + l.lineCost, 0);
+            const profit = sellingPrice - totalIngredientCost;
+            const marginPct = sellingPrice > 0
+                ? (profit / sellingPrice) * 100
+                : null;
+
+            // Margin band: RED < 30 %, YELLOW 30–60 %, GREEN > 60 %
+            let marginBand = 'NO_RECIPE';
+            if (ingredientLines.length > 0) {
+                if (marginPct === null) marginBand = 'NO_RECIPE';
+                else if (marginPct < 30) marginBand = 'LOW';
+                else if (marginPct < 60) marginBand = 'MEDIUM';
+                else marginBand = 'HIGH';
+            }
+
+            return {
+                id: item.id,
+                name: item.name,
+                description: item.description,
+                category: item.category.name,
+                sellingPrice,
+                ingredientCost: parseFloat(totalIngredientCost.toFixed(4)),
+                profit: parseFloat(profit.toFixed(4)),
+                marginPct: marginPct !== null ? parseFloat(marginPct.toFixed(2)) : null,
+                marginBand,
+                hasRecipe: ingredientLines.length > 0,
+                ingredients: ingredientLines
+            };
+        });
+
+        // Sort: items with recipe first, then by margin asc (lowest-margin first – easy to spot)
+        result.sort((a, b) => {
+            if (a.hasRecipe !== b.hasRecipe) return a.hasRecipe ? -1 : 1;
+            if (a.marginPct === null && b.marginPct === null) return 0;
+            if (a.marginPct === null) return 1;
+            if (b.marginPct === null) return -1;
+            return a.marginPct - b.marginPct;
+        });
+
+        // Summary stats (only items that have a recipe)
+        const withRecipe = result.filter(r => r.hasRecipe);
+        const summary = {
+            totalItems: result.length,
+            itemsWithRecipe: withRecipe.length,
+            itemsNoRecipe: result.length - withRecipe.length,
+            avgMarginPct: withRecipe.length
+                ? parseFloat((withRecipe.reduce((s, r) => s + r.marginPct, 0) / withRecipe.length).toFixed(2))
+                : null,
+            lowestMarginItem: withRecipe.length ? withRecipe[0] : null,
+            highestMarginItem: withRecipe.length ? withRecipe[withRecipe.length - 1] : null,
+            negativeMarginCount: withRecipe.filter(r => r.marginPct < 0).length
+        };
+
+        res.json({ summary, items: result });
+    } catch (error) {
+        console.error('Get recipe costing error:', error);
+        next(error);
+    }
+};
+
 // Delete menu item (hard-delete if no orders reference it, soft-delete otherwise)
 exports.deleteMenuItem = async (req, res, next) => {
     try {

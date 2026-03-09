@@ -185,7 +185,7 @@ async function processZomatoOrderPlaced(payload, webhookLogId) {
 
         for (const item of items) {
             // Try platform ID mapping first
-            let mapping = await prisma.platformItemMapping.findFirst({
+            let mapping = await prisma.menuItemMapping.findFirst({
                 where: {
                     platform: 'ZOMATO',
                     platformItemId: item.item_id?.toString()

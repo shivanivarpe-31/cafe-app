@@ -134,7 +134,7 @@ export const LoadingButton = ({
   );
 };
 
-export default {
+const LoadingExports = {
   Spinner,
   LoadingOverlay,
   LoadingSection,
@@ -143,3 +143,5 @@ export default {
   SkeletonGrid,
   LoadingButton,
 };
+
+export default LoadingExports;

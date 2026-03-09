@@ -14,8 +14,12 @@ import {
   Users,
   ChefHat,
   ChevronDown,
-  User,
   Keyboard,
+  UserCircle,
+  QrCode,
+  Zap,
+  Settings,
+  PieChart,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import KeyboardShortcutsHelp from "./KeyboardShortcutsHelp";
@@ -37,241 +41,370 @@ const Navbar = () => {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showShortcutsHelp, setShowShortcutsHelp] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
-  const userMenuRef = useRef(null);
+  const [openDropdown, setOpenDropdown] = useState(null); // 'manage' | 'analytics' | 'admin'
 
-  // Enable global navigation shortcuts
+  const userMenuRef = useRef(null);
+  const manageRef = useRef(null);
+  const analyticsRef = useRef(null);
+  const adminRef = useRef(null);
+
   useNavigationShortcuts();
 
-  // Navbar-specific shortcuts
   useKeyboardShortcuts({
     "?": () => setShowShortcutsHelp(true),
     escape: () => {
       if (showShortcutsHelp) setShowShortcutsHelp(false);
       else if (isMobileMenuOpen) setIsMobileMenuOpen(false);
       else if (showUserMenu) setShowUserMenu(false);
+      else if (openDropdown) setOpenDropdown(null);
     },
   });
 
-  // Close user menu when clicking outside
   useEffect(() => {
-    const handleClickOutside = (event) => {
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target)) {
+    const handle = (e) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target))
         setShowUserMenu(false);
-      }
+      if (
+        (!manageRef.current || !manageRef.current.contains(e.target)) &&
+        (!analyticsRef.current || !analyticsRef.current.contains(e.target)) &&
+        (!adminRef.current || !adminRef.current.contains(e.target))
+      )
+        setOpenDropdown(null);
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    document.addEventListener("mousedown", handle);
+    return () => document.removeEventListener("mousedown", handle);
   }, []);
 
   const isActive = (path) => location.pathname === path;
+  const isGroupActive = (paths) => paths.some((p) => location.pathname === p);
 
-  const toggleMobileMenu = () => {
-    setIsMobileMenuOpen(!isMobileMenuOpen);
-  };
+  const closeMobileMenu = () => setIsMobileMenuOpen(false);
 
-  const closeMobileMenu = () => {
-    setIsMobileMenuOpen(false);
-  };
-
-  // Get user role display
   const getUserRole = () => {
-    if (isAdmin()) return { label: "Admin", color: "bg-red-100 text-red-700" };
+    if (isAdmin())
+      return { label: "Admin", color: "bg-brand-50 text-brand-700" };
     if (isManager())
-      return { label: "Manager", color: "bg-blue-100 text-blue-700" };
-    if (isChef())
-      return { label: "Chef", color: "bg-orange-100 text-orange-700" };
-    return { label: "Staff", color: "bg-gray-100 text-gray-700" };
+      return { label: "Manager", color: "bg-blue-50 text-blue-700" };
+    if (isChef()) return { label: "Chef", color: "bg-amber-50 text-amber-700" };
+    return { label: "Staff", color: "bg-surface-100 text-ink-500" };
+  };
+
+  const getUserInitials = () => {
+    const name = user?.name || user?.email?.split("@")[0] || "U";
+    return name
+      .split(" ")
+      .map((p) => p[0])
+      .join("")
+      .toUpperCase()
+      .slice(0, 2);
   };
 
   const userRole = getUserRole();
 
-  // Navigation items for desktop
   const NavLink = ({ to, icon: Icon, label }) => (
     <Link
       to={to}
-      className={`px-3 py-2 text-sm font-medium rounded-lg transition-all flex items-center space-x-2 ${
+      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
         isActive(to)
-          ? "bg-red-50 text-red-600 shadow-sm"
-          : "text-gray-600 hover:text-gray-900 hover:bg-gray-50"
+          ? "bg-brand-50 text-brand-600"
+          : "text-ink-500 hover:text-ink-900 hover:bg-surface-100"
       }`}
     >
-      <Icon className="w-4 h-4" />
+      <Icon className="w-4 h-4 shrink-0" />
       <span>{label}</span>
     </Link>
   );
 
-  // Mobile navigation item
+  const DropdownTrigger = ({ id, icon: Icon, label, paths }) => {
+    const active = isGroupActive(paths);
+    const open = openDropdown === id;
+    return (
+      <button
+        onClick={() => setOpenDropdown(open ? null : id)}
+        className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
+          active || open
+            ? "bg-brand-50 text-brand-600"
+            : "text-ink-500 hover:text-ink-900 hover:bg-surface-100"
+        }`}
+      >
+        <Icon className="w-4 h-4 shrink-0" />
+        <span>{label}</span>
+        <ChevronDown
+          className={`w-3 h-3 ml-0.5 transition-transform duration-200 ${
+            open ? "rotate-180" : ""
+          }`}
+        />
+      </button>
+    );
+  };
+
+  const DropdownMenu = ({ id, items }) =>
+    openDropdown !== id ? null : (
+      <div
+        className="absolute top-full mt-1.5 left-0 w-52 bg-white rounded-xl border border-black/[.07] py-1.5 z-50 animate-fade-up"
+        style={{
+          boxShadow: "0 8px 24px rgba(0,0,0,.10),0 1px 0 rgba(0,0,0,.04)",
+        }}
+      >
+        {items.map(({ to, icon: Icon, label }) => (
+          <Link
+            key={to}
+            to={to}
+            onClick={() => setOpenDropdown(null)}
+            className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
+              isActive(to)
+                ? "text-brand-600 bg-brand-50/60"
+                : "text-gray-700 hover:bg-gray-50"
+            }`}
+          >
+            <Icon
+              className={`w-4 h-4 ${
+                isActive(to) ? "text-brand-500" : "text-gray-400"
+              }`}
+            />
+            {label}
+          </Link>
+        ))}
+      </div>
+    );
+
   const MobileNavLink = ({ to, icon: Icon, label, onClick }) => (
     <Link
       to={to}
       onClick={onClick}
-      className={`w-full px-4 py-3 text-sm font-medium rounded-xl transition-all flex items-center space-x-3 ${
+      className={`w-full px-3 py-2.5 text-sm font-medium rounded-xl transition-all flex items-center gap-3 ${
         isActive(to)
-          ? "bg-red-50 text-red-600"
-          : "text-gray-700 hover:bg-gray-50"
+          ? "bg-brand-50 text-brand-700"
+          : "text-ink-700 hover:bg-surface-100"
       }`}
     >
       <div
-        className={`w-9 h-9 rounded-lg flex items-center justify-center ${
-          isActive(to) ? "bg-red-100" : "bg-gray-100"
+        className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${
+          isActive(to) ? "bg-brand-100" : "bg-surface-100"
         }`}
       >
-        <Icon className="w-4 h-4" />
+        <Icon
+          className={`w-4 h-4 ${
+            isActive(to) ? "text-brand-600" : "text-ink-400"
+          }`}
+        />
       </div>
       <span>{label}</span>
     </Link>
   );
 
+  // Dropdown data
+  const managePaths = ["/menu", "/inventory", "/delivery"];
+  const manageItems = [
+    { to: "/menu", icon: Menu, label: "Menu Manager" },
+    { to: "/inventory", icon: Beaker, label: "Inventory" },
+    { to: "/delivery", icon: Truck, label: "Delivery" },
+  ];
+
+  const analyticsPaths = ["/reports", "/profit-analysis", "/eod-settings"];
+  const analyticsItems = [
+    { to: "/reports", icon: BarChart3, label: "Reports" },
+    ...(isAdmin()
+      ? [{ to: "/profit-analysis", icon: DollarSign, label: "Profit Analysis" }]
+      : []),
+    { to: "/eod-settings", icon: Zap, label: "EOD Report" },
+  ];
+
+  const adminPaths = ["/customers", "/users", "/qr-codes"];
+  const adminItems = [
+    { to: "/customers", icon: UserCircle, label: "Customers" },
+    { to: "/users", icon: Users, label: "User Management" },
+    { to: "/qr-codes", icon: QrCode, label: "QR Menu Codes" },
+  ];
+
   return (
     <>
-      <header className="bg-white/95 backdrop-blur-md border-b border-gray-200/80 sticky top-0 z-50">
+      <header
+        className="bg-white/95 backdrop-blur-md border-b border-black/[.06] sticky top-0 z-50"
+        style={{ boxShadow: "0 1px 0 rgba(0,0,0,.06)" }}
+      >
         <div className="max-w-7xl mx-auto px-4 sm:px-6">
-          <div className="flex items-center justify-between h-16">
-            {/* Left: Logo + Brand */}
-            <div className="flex items-center space-x-3">
-              <Link
-                to="/dashboard"
-                className="flex items-center space-x-3 group"
+          <div
+            className="flex items-center justify-between"
+            style={{ height: "60px" }}
+          >
+            {/* Logo */}
+            <Link
+              to="/dashboard"
+              className="flex items-center gap-3 group shrink-0"
+            >
+              <div
+                className="w-9 h-9 rounded-xl flex items-center justify-center group-hover:scale-105 transition-all duration-200"
+                style={{
+                  background: "linear-gradient(135deg,#ef4444,#dc2626)",
+                  boxShadow: "0 2px 8px rgba(220,38,38,.28)",
+                }}
               >
-                <div className="w-10 h-10 bg-gradient-to-br from-red-500 to-red-600 rounded-xl flex items-center justify-center shadow-lg shadow-red-500/20 group-hover:shadow-red-500/30 group-hover:scale-105 transition-all">
-                  <ShoppingCart className="w-5 h-5 text-white" />
-                </div>
-                <div className="hidden sm:block">
-                  <h1 className="text-lg font-bold text-gray-900 leading-tight">
-                    EatSy
-                  </h1>
-                  <p className="text-[10px] text-gray-400 font-medium tracking-wide uppercase">
-                    POS System
-                  </p>
-                </div>
-              </Link>
-            </div>
+                <ShoppingCart className="w-[17px] h-[17px] text-white" />
+              </div>
+              <div className="hidden sm:block">
+                <p className="text-[15px] font-bold text-gray-900 leading-none tracking-tight">
+                  EatSy
+                </p>
+                <p className="text-[10px] text-gray-400 font-medium tracking-widest uppercase mt-0.5">
+                  POS System
+                </p>
+              </div>
+            </Link>
 
-            {/* Center: Desktop Navigation */}
-            <nav className="hidden lg:flex items-center space-x-1">
-              {/* Chef View - Only Kitchen Display */}
+            {/* Desktop Nav */}
+            <nav className="hidden lg:flex items-center gap-0.5">
               {isChef() && !isAdminOrManager() && (
                 <NavLink to="/kitchen" icon={ChefHat} label="Kitchen" />
               )}
-
-              {/* Admin and Manager View */}
               {isAdminOrManager() && (
                 <>
                   <NavLink to="/dashboard" icon={Home} label="Dashboard" />
-                  <NavLink to="/menu" icon={Menu} label="Menu" />
-                  <NavLink to="/inventory" icon={Beaker} label="Inventory" />
                   <NavLink to="/orders" icon={Package} label="Orders" />
                   <NavLink to="/kitchen" icon={ChefHat} label="Kitchen" />
-                  <NavLink to="/delivery" icon={Truck} label="Delivery" />
-                  <NavLink to="/reports" icon={BarChart3} label="Reports" />
-                  {isAdmin() && (
-                    <NavLink
-                      to="/profit-analysis"
-                      icon={DollarSign}
-                      label="Profits"
+
+                  {/* Manage dropdown */}
+                  <div className="relative" ref={manageRef}>
+                    <DropdownTrigger
+                      id="manage"
+                      icon={Settings}
+                      label="Manage"
+                      paths={managePaths}
                     />
-                  )}
-                  <NavLink to="/users" icon={Users} label="Users" />
+                    <DropdownMenu id="manage" items={manageItems} />
+                  </div>
+
+                  {/* Analytics dropdown */}
+                  <div className="relative" ref={analyticsRef}>
+                    <DropdownTrigger
+                      id="analytics"
+                      icon={PieChart}
+                      label="Analytics"
+                      paths={analyticsPaths}
+                    />
+                    <DropdownMenu id="analytics" items={analyticsItems} />
+                  </div>
+
+                  {/* Admin dropdown */}
+                  <div className="relative" ref={adminRef}>
+                    <DropdownTrigger
+                      id="admin"
+                      icon={Users}
+                      label="Admin"
+                      paths={adminPaths}
+                    />
+                    <DropdownMenu id="admin" items={adminItems} />
+                  </div>
                 </>
               )}
             </nav>
 
-            {/* Right: Actions + User */}
-            <div className="flex items-center space-x-2">
-              {/* New Order Button - Desktop */}
+            {/* Right actions */}
+            <div className="flex items-center gap-2">
               {isAdminOrManager() && (
                 <Link
                   to="/billing"
-                  className="hidden lg:flex px-4 py-2 bg-gradient-to-r from-red-500 to-red-600 hover:from-red-600 hover:to-red-700 text-white text-sm font-semibold rounded-xl shadow-md shadow-red-500/20 hover:shadow-lg hover:shadow-red-500/30 transition-all items-center space-x-2"
+                  className="hidden lg:inline-flex items-center gap-2 px-4 py-2 rounded-xl text-white text-sm font-semibold transition-all duration-200 hover:-translate-y-px"
+                  style={{
+                    background: "linear-gradient(135deg,#ef4444,#dc2626)",
+                    boxShadow: "0 3px 10px rgba(220,38,38,.30)",
+                  }}
                 >
                   <ShoppingCart className="w-4 h-4" />
                   <span>New Order</span>
                 </Link>
               )}
 
-              {/* Keyboard Shortcuts Hint
-              <button
-                onClick={() => setShowShortcutsHelp(true)}
-                className="hidden md:flex p-2 text-gray-400 hover:text-gray-600 hover:bg-gray-100 rounded-lg transition-all"
-                title="Keyboard shortcuts (?)"
-              >
-                <Keyboard className="w-5 h-5" />
-              </button> */}
-
-              {/* User Menu - Desktop */}
+              {/* User menu */}
               <div className="hidden lg:block relative" ref={userMenuRef}>
                 <button
                   onClick={() => setShowUserMenu(!showUserMenu)}
-                  className="flex items-center space-x-2 px-3 py-2 rounded-xl hover:bg-gray-50 transition-all"
+                  className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-xl hover:bg-gray-50 transition-all duration-150"
                 >
-                  <div className="w-8 h-8 bg-gradient-to-br from-gray-100 to-gray-200 rounded-lg flex items-center justify-center">
-                    <User className="w-4 h-4 text-gray-600" />
+                  <div
+                    className="w-8 h-8 rounded-lg flex items-center justify-center"
+                    style={{
+                      background: "linear-gradient(135deg,#ef4444,#dc2626)",
+                      boxShadow: "0 1px 4px rgba(220,38,38,.25)",
+                    }}
+                  >
+                    <span className="text-white text-xs font-bold leading-none">
+                      {getUserInitials()}
+                    </span>
                   </div>
                   <div className="text-left hidden xl:block">
-                    <p className="text-sm font-medium text-gray-900 leading-tight truncate max-w-[120px]">
+                    <p className="text-sm font-semibold text-gray-900 leading-none truncate max-w-[120px]">
                       {user?.name || user?.email?.split("@")[0] || "User"}
                     </p>
-                    <p className="text-[10px] text-gray-400">
+                    <p className="text-[10px] text-gray-400 mt-0.5">
                       {userRole.label}
                     </p>
                   </div>
                   <ChevronDown
-                    className={`w-4 h-4 text-gray-400 transition-transform ${
+                    className={`w-3.5 h-3.5 text-gray-400 transition-transform duration-200 ${
                       showUserMenu ? "rotate-180" : ""
                     }`}
                   />
                 </button>
 
-                {/* User Dropdown */}
                 {showUserMenu && (
-                  <div className="absolute right-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-gray-200 py-2 animate-in fade-in slide-in-from-top-2 duration-200">
-                    {/* User Info */}
+                  <div
+                    className="absolute right-0 mt-2 w-60 bg-white rounded-2xl border border-black/[.07] py-1.5 animate-fade-up"
+                    style={{
+                      boxShadow:
+                        "0 8px 32px rgba(0,0,0,.10),0 1px 0 rgba(0,0,0,.04)",
+                    }}
+                  >
                     <div className="px-4 py-3 border-b border-gray-100">
-                      <div className="flex items-center space-x-3">
-                        <div className="w-10 h-10 bg-gradient-to-br from-red-100 to-red-200 rounded-xl flex items-center justify-center">
-                          <User className="w-5 h-5 text-red-600" />
+                      <div className="flex items-center gap-3">
+                        <div
+                          className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                          style={{
+                            background:
+                              "linear-gradient(135deg,#ef4444,#dc2626)",
+                          }}
+                        >
+                          <span className="text-white text-sm font-bold">
+                            {getUserInitials()}
+                          </span>
                         </div>
-                        <div className="flex-1 min-w-0">
+                        <div className="min-w-0">
                           <p className="text-sm font-semibold text-gray-900 truncate">
                             {user?.name || "User"}
                           </p>
-                          <p className="text-xs text-gray-500 truncate">
+                          <p className="text-xs text-gray-400 truncate">
                             {user?.email}
                           </p>
                         </div>
                       </div>
                       <span
-                        className={`inline-block mt-2 px-2 py-0.5 text-xs font-medium rounded-md ${userRole.color}`}
+                        className={`inline-block mt-2.5 px-2 py-0.5 text-[11px] font-semibold rounded-md ${userRole.color}`}
                       >
                         {userRole.label}
                       </span>
                     </div>
-
-                    {/* Menu Items */}
                     <div className="py-1">
                       <button
                         onClick={() => {
                           setShowUserMenu(false);
                           setShowShortcutsHelp(true);
                         }}
-                        className="w-full px-4 py-2 text-sm text-gray-700 hover:bg-gray-50 flex items-center space-x-3"
+                        className="w-full px-4 py-2.5 text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-3 transition-colors"
                       >
                         <Keyboard className="w-4 h-4 text-gray-400" />
                         <span>Keyboard Shortcuts</span>
-                        <span className="ml-auto text-xs text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded">
+                        <span className="ml-auto text-[10px] text-gray-400 bg-gray-100 px-1.5 py-0.5 rounded font-mono">
                           ?
                         </span>
                       </button>
                     </div>
-
-                    {/* Logout */}
                     <div className="pt-1 border-t border-gray-100">
                       <button
                         onClick={() => {
                           setShowUserMenu(false);
                           logout();
                         }}
-                        className="w-full px-4 py-2 text-sm text-red-600 hover:bg-red-50 flex items-center space-x-3"
+                        className="w-full px-4 py-2.5 text-sm text-red-600 hover:bg-red-50 flex items-center gap-3 transition-colors"
                       >
                         <LogOut className="w-4 h-4" />
                         <span>Sign out</span>
@@ -281,27 +414,30 @@ const Navbar = () => {
                 )}
               </div>
 
-              {/* Mobile: New Order + Hamburger */}
-              <div className="flex lg:hidden items-center space-x-2">
+              {/* Mobile */}
+              <div className="flex lg:hidden items-center gap-2">
                 {isAdminOrManager() && (
                   <Link
                     to="/billing"
                     onClick={closeMobileMenu}
-                    className="px-3 py-2 bg-gradient-to-r from-red-500 to-red-600 text-white text-sm font-semibold rounded-lg shadow-md flex items-center space-x-1.5"
+                    className="flex items-center gap-1.5 px-3 py-2 text-white text-sm font-semibold rounded-lg"
+                    style={{
+                      background: "linear-gradient(135deg,#ef4444,#dc2626)",
+                      boxShadow: "0 2px 6px rgba(220,38,38,.30)",
+                    }}
                   >
                     <ShoppingCart className="w-4 h-4" />
                     <span className="hidden sm:inline">Order</span>
                   </Link>
                 )}
-
                 <button
-                  onClick={toggleMobileMenu}
-                  className="p-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-all"
+                  onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                  className="p-2 text-gray-500 hover:bg-gray-100 rounded-lg transition-all"
                 >
                   {isMobileMenuOpen ? (
-                    <X className="w-6 h-6" />
+                    <X className="w-5 h-5" />
                   ) : (
-                    <Menu className="w-6 h-6" />
+                    <Menu className="w-5 h-5" />
                   )}
                 </button>
               </div>
@@ -311,28 +447,31 @@ const Navbar = () => {
 
         {/* Mobile Menu */}
         {isMobileMenuOpen && (
-          <div className="lg:hidden border-t border-gray-200 bg-white">
-            <div className="px-4 py-4 space-y-1 max-h-[calc(100vh-4rem)] overflow-y-auto">
-              {/* User Info - Mobile */}
-              <div className="mb-4 p-3 bg-gray-50 rounded-xl">
-                <div className="flex items-center space-x-3">
-                  <div className="w-10 h-10 bg-gradient-to-br from-red-100 to-red-200 rounded-xl flex items-center justify-center">
-                    <User className="w-5 h-5 text-red-600" />
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">
-                      {user?.name || user?.email?.split("@")[0] || "User"}
-                    </p>
-                    <span
-                      className={`inline-block px-2 py-0.5 text-xs font-medium rounded-md ${userRole.color}`}
-                    >
-                      {userRole.label}
-                    </span>
-                  </div>
+          <div className="lg:hidden border-t border-gray-100 bg-white">
+            <div className="px-3 py-3 space-y-0.5 max-h-[calc(100vh-60px)] overflow-y-auto">
+              <div className="mb-3 p-3 bg-gray-50 rounded-xl flex items-center gap-3">
+                <div
+                  className="w-10 h-10 rounded-xl flex items-center justify-center shrink-0"
+                  style={{
+                    background: "linear-gradient(135deg,#ef4444,#dc2626)",
+                  }}
+                >
+                  <span className="text-white text-sm font-bold">
+                    {getUserInitials()}
+                  </span>
+                </div>
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold text-gray-900 truncate">
+                    {user?.name || user?.email?.split("@")[0] || "User"}
+                  </p>
+                  <span
+                    className={`inline-block px-2 py-0.5 text-[11px] font-semibold rounded-md ${userRole.color}`}
+                  >
+                    {userRole.label}
+                  </span>
                 </div>
               </div>
 
-              {/* Navigation Links */}
               {isChef() && !isAdminOrManager() && (
                 <MobileNavLink
                   to="/kitchen"
@@ -350,24 +489,6 @@ const Navbar = () => {
                     label="Dashboard"
                     onClick={closeMobileMenu}
                   />
-
-                  <div className="pt-2 pb-1">
-                    <p className="px-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                      Operations
-                    </p>
-                  </div>
-                  <MobileNavLink
-                    to="/menu"
-                    icon={Menu}
-                    label="Menu Management"
-                    onClick={closeMobileMenu}
-                  />
-                  <MobileNavLink
-                    to="/inventory"
-                    icon={Beaker}
-                    label="Inventory"
-                    onClick={closeMobileMenu}
-                  />
                   <MobileNavLink
                     to="/orders"
                     icon={Package}
@@ -380,6 +501,22 @@ const Navbar = () => {
                     label="Kitchen Display"
                     onClick={closeMobileMenu}
                   />
+
+                  <p className="px-3 pt-3 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
+                    Manage
+                  </p>
+                  <MobileNavLink
+                    to="/menu"
+                    icon={Menu}
+                    label="Menu Manager"
+                    onClick={closeMobileMenu}
+                  />
+                  <MobileNavLink
+                    to="/inventory"
+                    icon={Beaker}
+                    label="Inventory"
+                    onClick={closeMobileMenu}
+                  />
                   <MobileNavLink
                     to="/delivery"
                     icon={Truck}
@@ -387,11 +524,9 @@ const Navbar = () => {
                     onClick={closeMobileMenu}
                   />
 
-                  <div className="pt-3 pb-1">
-                    <p className="px-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                      Analytics
-                    </p>
-                  </div>
+                  <p className="px-3 pt-3 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
+                    Analytics
+                  </p>
                   <MobileNavLink
                     to="/reports"
                     icon={BarChart3}
@@ -406,44 +541,58 @@ const Navbar = () => {
                       onClick={closeMobileMenu}
                     />
                   )}
+                  <MobileNavLink
+                    to="/eod-settings"
+                    icon={Zap}
+                    label="EOD Report"
+                    onClick={closeMobileMenu}
+                  />
 
-                  <div className="pt-3 pb-1">
-                    <p className="px-4 text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                      Administration
-                    </p>
-                  </div>
+                  <p className="px-3 pt-3 pb-1 text-[10px] font-semibold text-gray-400 uppercase tracking-widest">
+                    Administration
+                  </p>
+                  <MobileNavLink
+                    to="/customers"
+                    icon={UserCircle}
+                    label="Customers"
+                    onClick={closeMobileMenu}
+                  />
                   <MobileNavLink
                     to="/users"
                     icon={Users}
                     label="User Management"
                     onClick={closeMobileMenu}
                   />
+                  <MobileNavLink
+                    to="/qr-codes"
+                    icon={QrCode}
+                    label="QR Menu Codes"
+                    onClick={closeMobileMenu}
+                  />
                 </>
               )}
 
-              {/* Actions */}
-              <div className="pt-4 mt-2 border-t border-gray-200 space-y-1">
+              <div className="pt-3 mt-2 border-t border-gray-100 space-y-0.5">
                 <button
                   onClick={() => {
                     closeMobileMenu();
                     setShowShortcutsHelp(true);
                   }}
-                  className="w-full px-4 py-3 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-xl flex items-center space-x-3"
+                  className="w-full px-3 py-2.5 text-sm font-medium text-gray-700 hover:bg-gray-50 rounded-xl flex items-center gap-3 transition-colors"
                 >
-                  <div className="w-9 h-9 bg-gray-100 rounded-lg flex items-center justify-center">
-                    <Keyboard className="w-4 h-4 text-gray-500" />
+                  <div className="w-8 h-8 bg-gray-100 rounded-lg flex items-center justify-center">
+                    <Keyboard className="w-4 h-4 text-gray-400" />
                   </div>
                   <span>Keyboard Shortcuts</span>
                 </button>
-
                 <button
                   onClick={() => {
                     logout();
                     closeMobileMenu();
                   }}
-                  className="w-full px-4 py-3 text-sm font-medium text-red-600 hover:bg-red-50 rounded-xl flex items-center space-x-3"
+                  className="w-full px-3 py-2.5 text-sm font-medium text-red-600 hover:bg-red-50 rounded-xl flex items-center gap-3 transition-colors"
                 >
-                  <div className="w-9 h-9 bg-red-50 rounded-lg flex items-center justify-center">
+                  <div className="w-8 h-8 bg-red-50 rounded-lg flex items-center justify-center">
                     <LogOut className="w-4 h-4 text-red-500" />
                   </div>
                   <span>Sign out</span>
@@ -454,7 +603,6 @@ const Navbar = () => {
         )}
       </header>
 
-      {/* Keyboard Shortcuts Help Modal */}
       <KeyboardShortcutsHelp
         isOpen={showShortcutsHelp}
         onClose={() => setShowShortcutsHelp(false)}

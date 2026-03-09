@@ -139,7 +139,7 @@ export const dismissAllToasts = () => {
   toast.dismiss();
 };
 
-export default {
+const toastUtils = {
   success: showSuccess,
   error: showError,
   warning: showWarning,
@@ -150,3 +150,5 @@ export default {
   dismiss: dismissToast,
   dismissAll: dismissAllToasts,
 };
+
+export default toastUtils;

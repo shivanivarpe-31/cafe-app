@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import {
   X,
   Plus,
@@ -6,11 +6,9 @@ import {
   TrendingUp,
   TrendingDown,
   RefreshCw,
-  Package,
   Trash2,
   ChefHat,
   History,
-  AlertTriangle,
 } from "lucide-react";
 import { getUnitLabel } from "./IngredientComponents";
 import { useFocusTrap } from "../../hooks/useFocusTrap";
@@ -55,6 +53,7 @@ export const StockModal = ({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOpen, isSubmitting, quantity, onClose]);
 
   const handleSubmit = () => {

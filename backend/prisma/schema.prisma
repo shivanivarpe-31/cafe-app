@@ -92,6 +92,9 @@ model MenuItem {
   ingredients MenuItemIngredient[]
   orderItems  OrderItem[]
   platformMappings MenuItemMapping[] // Platform menu item mappings
+  // Prep time tracking
+  avgPrepTime Float?               // rolling average prep time in seconds
+  prepCount   Int                  @default(0) // number of completed preps used for average
   createdAt   DateTime             @default(now())
 }
 
@@ -158,6 +161,10 @@ model Order {
   deliveryInfo DeliveryInfo?
   payments     Payment[] // Add this line
 
+  // Linked customer (captured at payment time)
+  customerId   Int?
+  customer     Customer? @relation(fields: [customerId], references: [id])
+
   // Indexes for frequently queried fields
   @@index([status])
   @@index([createdAt])
@@ -175,6 +182,11 @@ model OrderItem {
   price         Decimal                 @db.Decimal(10, 2)
   notes         String?
   modifications OrderItemModification[]
+
+  // Prep time tracking per item
+  prepStatus      String    @default("PENDING")  // PENDING | PREPARING | DONE
+  prepStartedAt   DateTime?                       // when chef tapped Start
+  prepCompletedAt DateTime?                       // when chef tapped Done
 
   // Indexes for join queries and groupBy operations
   @@index([menuItemId])
@@ -229,6 +241,19 @@ model Table {
   @@index([mergedGroupId])
   @@map("tables")
 }
+model Customer {
+  id         Int      @id @default(autoincrement())
+  name       String
+  phone      String   @unique
+  email      String?
+  visitCount Int      @default(1)
+  totalSpent Decimal  @default(0) @db.Decimal(10, 2)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  orders     Order[]
+
+  @@index([phone])
+}
 
 model DeliveryInfo {
   id      Int   @id @default(autoincrement())
@@ -273,6 +298,8 @@ model DeliveryInfo {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([deliveryPlatform, platformOrderId], name: "unique_platform_order")
 }
 
 model Payment {
@@ -342,6 +369,26 @@ model IntegrationLog {
   @@index([platform, eventType, createdAt])
   @@index([orderId])
   @@index([success, createdAt])
+}
+
+// Webhook log for retry queue and debugging
+model WebhookLog {
+  id             Int              @id @default(autoincrement())
+  platform       DeliveryPlatform
+  eventType      String           @db.VarChar(100)
+  payload        String           @db.LongText
+  status         String           @default("FAILED") @db.VarChar(20) // PENDING, FAILED, SUCCESS
+  error          String?          @db.LongText
+  attemptCount   Int              @default(0)
+  nextRetryAt    DateTime?
+  lastAttemptAt  DateTime?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  @@index([status, nextRetryAt])
+  @@index([platform, eventType])
+  @@index([createdAt])
+  @@map("webhookLog")
 }
 
 // Platform configuration and credentials

@@ -22,6 +22,7 @@ const IntegrationDashboard = () => {
     return () => clearInterval(interval);
   }, [autoRefresh, loadStats]);
 
+  // eslint-disable-next-line no-unused-vars
   const getWebhookStatusColor = (status) => {
     switch (status) {
       case "SUCCESS":

@@ -477,129 +477,150 @@ const Dashboard = () => {
 
       {/* Stats Bar */}
       <div
-        className={`bg-white border-b border-gray-200 py-5 ${
+        className={`border-b border-gray-100 bg-white/80 backdrop-blur-sm py-5 ${
           newOrderAlert ? "mt-12" : ""
         }`}
       >
         <div className="max-w-7xl mx-auto px-6">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-bold text-gray-900">
-              Dashboard Overview
-            </h2>
-            <div className="flex items-center space-x-3">
+          <div className="flex items-center justify-between mb-5">
+            <div>
+              <h2 className="text-lg font-bold text-gray-900 leading-none">
+                Dashboard
+              </h2>
+              <p className="text-xs text-gray-400 mt-0.5">Today's overview</p>
+            </div>
+            <div className="flex items-center gap-2">
               <button
                 onClick={() => setSoundEnabled(!soundEnabled)}
-                className={`p-2 rounded-lg transition-all ${
+                className={`p-2 rounded-lg transition-all text-sm ${
                   soundEnabled
-                    ? "bg-green-100 text-green-600 hover:bg-green-200"
-                    : "bg-gray-100 text-gray-400 hover:bg-gray-200"
+                    ? "bg-emerald-50 text-emerald-600"
+                    : "bg-gray-100 text-gray-400"
                 }`}
                 title={soundEnabled ? "Sound On" : "Sound Off"}
               >
                 {soundEnabled ? (
-                  <Volume2 className="w-5 h-5" />
+                  <Volume2 className="w-4 h-4" />
                 ) : (
-                  <VolumeX className="w-5 h-5" />
+                  <VolumeX className="w-4 h-4" />
                 )}
               </button>
               <button
                 onClick={fetchDashboardData}
                 disabled={refreshing}
-                className="flex items-center space-x-2 px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-medium transition-all disabled:opacity-50"
+                className="flex items-center gap-1.5 px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-lg text-xs font-medium transition-all disabled:opacity-50"
               >
                 <RefreshCw
-                  className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`}
+                  className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""}`}
                 />
                 <span>{refreshing ? "Updating..." : "Refresh"}</span>
               </button>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-6">
-            <div className="flex items-center space-x-3 group hover:shadow-md transition-all p-3 rounded-xl">
-              <div className="w-12 h-12 bg-red-100 rounded-xl flex items-center justify-center group-hover:bg-red-200 transition-colors">
-                <DollarSign className="w-6 h-6 text-red-600" />
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            {/* Sales */}
+            <div className="bg-red-50 border border-red-100 rounded-2xl p-4 group hover:-translate-y-px transition-all duration-200">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm">
+                  <DollarSign className="w-4 h-4 text-red-500" />
+                </div>
+                <span className="text-xs font-semibold text-red-400 uppercase tracking-wider">
+                  Sales
+                </span>
               </div>
-              <div>
-                <p className="text-xs text-gray-500 font-medium">
-                  Today's Sales
-                </p>
-                <p className="text-2xl font-bold text-gray-900">
-                  ₹{Number(stats.todaySales || 0).toLocaleString()}
-                </p>
-              </div>
+              <p className="text-2xl font-bold text-gray-900 leading-none">
+                ₹{Number(stats.todaySales || 0).toLocaleString()}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Today's revenue</p>
             </div>
 
-            <div className="flex items-center space-x-3 group hover:shadow-md transition-all p-3 rounded-xl">
-              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center group-hover:bg-blue-200 transition-colors">
-                <ShoppingCart className="w-6 h-6 text-blue-600" />
+            {/* Orders */}
+            <div className="bg-blue-50 border border-blue-100 rounded-2xl p-4 hover:-translate-y-px transition-all duration-200">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm">
+                  <ShoppingCart className="w-4 h-4 text-blue-500" />
+                </div>
+                <span className="text-xs font-semibold text-blue-400 uppercase tracking-wider">
+                  Orders
+                </span>
               </div>
-              <div>
-                <p className="text-xs text-gray-500 font-medium">
-                  Today's Orders
-                </p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {stats.todayOrders || 0}
-                </p>
-              </div>
+              <p className="text-2xl font-bold text-gray-900 leading-none">
+                {stats.todayOrders || 0}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Orders placed today</p>
             </div>
 
-            <div className="flex items-center space-x-3 group hover:shadow-md transition-all p-3 rounded-xl">
-              <div className="w-12 h-12 bg-purple-100 rounded-xl flex items-center justify-center group-hover:bg-purple-200 transition-colors">
-                <Users className="w-6 h-6 text-purple-600" />
+            {/* Tables */}
+            <div className="bg-purple-50 border border-purple-100 rounded-2xl p-4 hover:-translate-y-px transition-all duration-200">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm">
+                  <Users className="w-4 h-4 text-purple-500" />
+                </div>
+                <span className="text-xs font-semibold text-purple-400 uppercase tracking-wider">
+                  Tables
+                </span>
               </div>
-              <div>
-                <p className="text-xs text-gray-500 font-medium">
-                  Active Tables
-                </p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {occupiedCount}
-                </p>
-              </div>
+              <p className="text-2xl font-bold text-gray-900 leading-none">
+                {occupiedCount}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Currently occupied</p>
             </div>
 
-            <div className="flex items-center space-x-3 group hover:shadow-md transition-all p-3 rounded-xl">
-              <div className="w-12 h-12 bg-orange-100 rounded-xl flex items-center justify-center group-hover:bg-orange-200 transition-colors">
-                <AlertTriangle className="w-6 h-6 text-orange-600" />
+            {/* Low Stock */}
+            <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 hover:-translate-y-px transition-all duration-200">
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm">
+                  <AlertTriangle className="w-4 h-4 text-amber-500" />
+                </div>
+                <span className="text-xs font-semibold text-amber-400 uppercase tracking-wider">
+                  Stock
+                </span>
               </div>
-              <div>
-                <p className="text-xs text-gray-500 font-medium">Low Stock</p>
-                <p className="text-2xl font-bold text-gray-900">
-                  {stats.lowStockCount || 0}
-                </p>
-              </div>
+              <p className="text-2xl font-bold text-gray-900 leading-none">
+                {stats.lowStockCount || 0}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Items low on stock</p>
             </div>
 
-            <div className="flex items-center space-x-3 group hover:shadow-md transition-all p-3 rounded-xl">
-              <div
-                className={`w-12 h-12 rounded-xl flex items-center justify-center transition-colors ${
-                  deliveryOrders.length > 0
-                    ? "bg-green-100 group-hover:bg-green-200"
-                    : "bg-gray-100 group-hover:bg-gray-200"
-                }`}
-              >
-                <Truck
-                  className={`w-6 h-6 ${
+            {/* Online */}
+            <div
+              className={`border rounded-2xl p-4 hover:-translate-y-px transition-all duration-200 ${
+                deliveryOrders.length > 0
+                  ? "bg-emerald-50 border-emerald-100"
+                  : "bg-gray-50 border-gray-100"
+              }`}
+            >
+              <div className="flex items-center gap-2 mb-2">
+                <div className="w-8 h-8 bg-white rounded-lg flex items-center justify-center shadow-sm">
+                  <Truck
+                    className={`w-4 h-4 ${
+                      deliveryOrders.length > 0
+                        ? "text-emerald-500"
+                        : "text-gray-400"
+                    }`}
+                  />
+                </div>
+                <span
+                  className={`text-xs font-semibold uppercase tracking-wider ${
                     deliveryOrders.length > 0
-                      ? "text-green-600"
-                      : "text-gray-600"
-                  }`}
-                />
-              </div>
-              <div>
-                <p className="text-xs text-gray-500 font-medium">
-                  Online Orders
-                </p>
-                <p
-                  className={`text-2xl font-bold ${
-                    deliveryOrders.length > 0
-                      ? "text-green-600"
-                      : "text-gray-900"
+                      ? "text-emerald-400"
+                      : "text-gray-400"
                   }`}
                 >
-                  {deliveryOrders.length}
-                </p>
+                  Online
+                </span>
               </div>
+              <p
+                className={`text-2xl font-bold leading-none ${
+                  deliveryOrders.length > 0
+                    ? "text-emerald-700"
+                    : "text-gray-900"
+                }`}
+              >
+                {deliveryOrders.length}
+              </p>
+              <p className="text-xs text-gray-500 mt-1">Active deliveries</p>
             </div>
           </div>
         </div>
@@ -779,15 +800,15 @@ const Dashboard = () => {
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           <div className="lg:col-span-2 space-y-6">
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-2">
+              <div className="flex items-center gap-1 p-1 bg-gray-100 rounded-xl">
                 {sections.map((section) => (
                   <button
                     key={section}
                     onClick={() => setSelectedSection(section)}
-                    className={`px-4 py-2 rounded-lg text-sm font-semibold transition-all ${
+                    className={`px-3 py-1.5 rounded-lg text-sm font-semibold transition-all duration-150 ${
                       selectedSection === section
-                        ? "bg-red-500 text-white shadow-md"
-                        : "bg-white text-gray-700 border border-gray-200 hover:border-red-300"
+                        ? "bg-white text-gray-900 shadow-sm"
+                        : "text-gray-500 hover:text-gray-700"
                     }`}
                   >
                     {section}
@@ -795,77 +816,77 @@ const Dashboard = () => {
                 ))}
               </div>
 
-              <div className="flex items-center space-x-4 text-xs">
-                <div className="flex items-center space-x-2">
-                  <div className="w-3 h-3 bg-white border-2 border-gray-300 rounded"></div>
-                  <span className="text-gray-600">Available</span>
+              <div className="flex items-center gap-3 text-xs text-gray-500">
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-gray-200 border border-gray-300"></div>
+                  <span>Available</span>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <div className="w-3 h-3 bg-red-100 border-2 border-red-400 rounded"></div>
-                  <span className="text-gray-600">Occupied</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-red-400"></div>
+                  <span>Occupied</span>
                 </div>
-                <div className="flex items-center space-x-2">
-                  <div className="w-3 h-3 bg-yellow-100 border-2 border-yellow-400 rounded"></div>
-                  <span className="text-gray-600">Reserved</span>
+                <div className="flex items-center gap-1.5">
+                  <div className="w-2.5 h-2.5 rounded-full bg-amber-400"></div>
+                  <span>Reserved</span>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-3">
               {filteredTables.map((table) => (
                 <Link
                   key={table.id}
                   to={`/billing?table=${table.id}`}
                   className={`group relative ${getTableColor(
                     table.status,
-                  )} border-2 rounded-2xl p-4 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 ${
-                    table.isMerged ? "ring-2 ring-blue-400" : ""
+                  )} border rounded-2xl p-3.5 transition-all duration-200 hover:shadow-lg hover:-translate-y-0.5 ${
+                    table.isMerged ? "ring-2 ring-blue-400 ring-offset-1" : ""
                   }`}
                 >
                   {table.isMerged && (
                     <div className="absolute -top-2 -left-2">
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-blue-500 text-white shadow-md">
-                        <LinkIcon className="w-3 h-3 mr-1" />
+                      <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-semibold bg-blue-500 text-white shadow">
+                        <LinkIcon className="w-2.5 h-2.5 mr-0.5" />
                         Merged
                       </span>
                     </div>
                   )}
                   <div className="text-center">
                     <div
-                      className={`w-14 h-14 mx-auto mb-2 rounded-xl flex items-center justify-center shadow-md transition-all duration-300 group-hover:scale-110 ${getStatusBadge(
+                      className={`w-12 h-12 mx-auto mb-2 rounded-xl flex items-center justify-center transition-all duration-200 group-hover:scale-105 ${getStatusBadge(
                         table.status,
-                      )} text-white`}
+                      )} text-white shadow-sm`}
                     >
-                      <span className="text-base font-bold">{table.id}</span>
+                      <span className="text-sm font-bold">{table.id}</span>
                     </div>
-                    <p className="font-semibold text-gray-900 text-sm mb-1">
+                    <p className="font-semibold text-gray-900 text-xs leading-tight">
                       {table.name}
                     </p>
 
                     {getStatus(table.status) === "occupied" && (
-                      <div className="mt-2 pt-2 border-t border-gray-200 space-y-1">
+                      <div className="mt-1.5 pt-1.5 border-t border-red-200/60 space-y-0.5">
                         <p className="text-xs font-bold text-red-600">
                           ₹{table.currentBill || 0}
                         </p>
-                        <p className="text-xs text-gray-500">
+                        <p className="text-[10px] text-gray-400 truncate">
                           {table.orderTime}
                         </p>
                       </div>
                     )}
 
                     {getStatus(table.status) === "reserved" && (
-                      <div className="space-y-1">
-                        <p className="text-xs font-medium text-yellow-700">
+                      <div className="mt-1 space-y-0.5">
+                        <p className="text-[10px] font-medium text-amber-700 truncate">
                           {table.customerName}
                         </p>
-                        <p className="text-xs text-yellow-600">
+                        <p className="text-[10px] text-amber-600">
                           {getTimeRemaining(table.reservedUntil)}
                         </p>
                       </div>
                     )}
 
                     {getStatus(table.status) === "available" && (
-                      <p className="text-xs text-gray-400 mt-1">Empty</p>
+                      <p className="text-[10px] text-gray-400 mt-1">Empty</p>
                     )}
                   </div>
 
@@ -897,28 +918,31 @@ const Dashboard = () => {
           </div>
 
           {/* Sidebar */}
-          <div className="lg:col-span-1 space-y-6">
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-              <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center">
-                <Clock className="w-5 h-5 mr-2 text-red-500" />
+          <div className="lg:col-span-1 space-y-5">
+            <div
+              className="bg-white rounded-2xl border border-gray-100 p-5"
+              style={{ boxShadow: "0 1px 4px rgba(0,0,0,.06)" }}
+            >
+              <h3 className="text-sm font-bold text-gray-900 mb-4 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-red-500" />
                 Recent Orders
               </h3>
-              <div className="space-y-3 max-h-96 overflow-y-auto">
+              <div className="space-y-2 max-h-80 overflow-y-auto">
                 {recentOrders.length > 0 ? (
                   recentOrders.map((order) => (
                     <div
                       key={order.id}
-                      className="p-4 bg-gray-50 rounded-xl border border-gray-200 hover:shadow-md transition-all"
+                      className="px-3 py-2.5 bg-gray-50 rounded-xl border border-gray-100 hover:border-gray-200 hover:bg-white transition-all"
                     >
-                      <div className="flex items-center justify-between mb-2">
+                      <div className="flex items-center justify-between mb-1">
                         <span className="text-sm font-bold text-gray-900">
                           {order.billNumber || order.id}
                         </span>
-                        <span className="text-xs px-2 py-1 rounded-full font-medium text-white bg-green-500">
+                        <span className="text-[10px] px-2 py-0.5 rounded-full font-semibold text-white bg-emerald-500">
                           {order.status}
                         </span>
                       </div>
-                      <p className="text-xs text-gray-500">
+                      <p className="text-xs text-gray-400">
                         {order.table
                           ? `Table ${order.table?.number || order.tableId}`
                           : order.orderType}{" "}
@@ -927,35 +951,38 @@ const Dashboard = () => {
                     </div>
                   ))
                 ) : (
-                  <div className="text-center py-8 text-sm text-gray-500">
+                  <div className="text-center py-8 text-sm text-gray-400">
                     No recent orders
                   </div>
                 )}
               </div>
             </div>
 
-            <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-6">
-              <h3 className="text-lg font-bold text-gray-900 mb-4">
+            <div
+              className="bg-white rounded-2xl border border-gray-100 p-5"
+              style={{ boxShadow: "0 1px 4px rgba(0,0,0,.06)" }}
+            >
+              <h3 className="text-sm font-bold text-gray-900 mb-4">
                 Quick Stats
               </h3>
-              <div className="space-y-4">
+              <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Menu Items</span>
-                  <span className="text-lg font-bold text-gray-900">
+                  <span className="text-sm text-gray-500">Menu Items</span>
+                  <span className="text-sm font-bold text-gray-900">
                     {menuItems.length}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">
+                  <span className="text-sm text-gray-500">
                     Total Items Sold
                   </span>
-                  <span className="text-lg font-bold text-gray-900">
+                  <span className="text-sm font-bold text-gray-900">
                     {stats.totalItemsSold || 0}
                   </span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span className="text-sm text-gray-600">Table Occupancy</span>
-                  <span className="text-lg font-bold text-blue-600">
+                  <span className="text-sm text-gray-500">Table Occupancy</span>
+                  <span className="text-sm font-bold text-blue-600">
                     {occupancyPct}%
                   </span>
                 </div>

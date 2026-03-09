@@ -1,4 +1,5 @@
 const { prisma } = require('../prisma');
+const logger = require('./logger');
 
 // Check and release expired reservations
 const releaseExpiredReservations = async () => {
@@ -117,8 +118,60 @@ const startReservationScheduler = (intervalMinutes = 1) => {
     return intervalId;
 };
 
+// ─── End-of-Day Report Scheduler ────────────────────────────────
+// Calculates ms until the next HH:MM local time and fires then,
+// then reschedules itself every 24 h.
+let _eodTimeoutId = null;
+
+function msUntilTime(hh, mm) {
+    const now = new Date();
+    const next = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hh, mm, 0, 0);
+    if (next <= now) next.setDate(next.getDate() + 1);
+    return next.getTime() - now.getTime();
+}
+
+async function runEODReport() {
+    try {
+        const { readConfig } = require('./eodConfig');
+        const cfg = readConfig();
+        if (!cfg.enabled) {
+            logger.info('EOD scheduler: disabled, skipping');
+            return;
+        }
+
+        // Delegate entirely to the shared dispatcher in the controller
+        const { dispatchReport } = require('../controllers/eodController');
+        const results = await dispatchReport(new Date());
+        logger.info('EOD scheduler: report dispatched', { results });
+    } catch (err) {
+        // A 400-style "no channels" error is expected when not configured; log but don't crash
+        logger.error('EOD scheduler: unexpected error', { error: err.message });
+    }
+}
+
+function startEODScheduler(sendTime) {
+    const [hh, mm] = (sendTime || '22:00').split(':').map(Number);
+    const delay = msUntilTime(hh, mm);
+    const nextFire = new Date(Date.now() + delay);
+    logger.info(`EOD scheduler armed — next run at ${nextFire.toLocaleString('en-IN')}`);
+
+    if (_eodTimeoutId) clearTimeout(_eodTimeoutId);
+    _eodTimeoutId = setTimeout(async () => {
+        await runEODReport();
+        // Re-arm for next day using latest config (sendTime may have changed)
+        const { readConfig: readLatest } = require('./eodConfig');
+        const latestCfg = readLatest();
+        startEODScheduler(latestCfg.sendTime);
+    }, delay);
+}
+
+// Allow runtime rescheduling (called from eodController after settings update)
+global.rescheduleEOD = (newTime) => { startEODScheduler(newTime); };
+
 module.exports = {
     releaseExpiredReservations,
     getExpiringReservations,
-    startReservationScheduler
+    startReservationScheduler,
+    startEODScheduler,
+    runEODReport,
 };

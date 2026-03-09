@@ -1,6 +1,7 @@
 const { prisma } = require('../prisma');
 const config = require('../config/businessConfig');
 const { getPaginationParams, formatPaginatedResponse } = require('../utils/pagination');
+const { findOrCreateCustomer } = require('../utils/customerHelper');
 const {
     createNotFoundError,
     createValidationError,
@@ -13,7 +14,7 @@ const {
 // Record manual payment (Cash, Card, UPI)
 exports.recordManualPayment = async (req, res, next) => {
     try {
-        const { orderId, paymentMode, amount, notes } = req.body;
+        const { orderId, paymentMode, amount, notes, customerName, customerPhone } = req.body;
 
         if (!orderId || !paymentMode || !amount) {
             return res.status(400).json({ error: 'Order ID, payment mode, and amount are required' });
@@ -53,14 +54,19 @@ exports.recordManualPayment = async (req, res, next) => {
                 }
             });
 
+            // Find-or-create customer and link
+            const customer = await findOrCreateCustomer(tx, customerName, customerPhone, order.total);
+            const orderUpdateData = {
+                status: 'PAID',
+                paymentMode: paymentMode.toUpperCase(),
+                paidAt: new Date()
+            };
+            if (customer) orderUpdateData.customerId = customer.id;
+
             // Update order
             await tx.order.update({
                 where: { id: parseInt(orderId, 10) },
-                data: {
-                    status: 'PAID',
-                    paymentMode: paymentMode.toUpperCase(),
-                    paidAt: new Date()
-                }
+                data: orderUpdateData
             });
 
             return paymentRecord;
@@ -278,7 +284,7 @@ exports.refundPayment = async (req, res, next) => {
 // Process split payment (multiple payment methods for one order)
 exports.processSplitPayment = async (req, res, next) => {
     try {
-        const { orderId, payments } = req.body;
+        const { orderId, payments, customerName, customerPhone } = req.body;
 
         // Validation: Check required fields
         if (!orderId || !payments || !Array.isArray(payments)) {
@@ -393,6 +399,15 @@ exports.processSplitPayment = async (req, res, next) => {
                     paidAt: new Date()
                 }
             });
+
+            // Find-or-create customer and link
+            const customer = await findOrCreateCustomer(tx, customerName, customerPhone, order.total);
+            if (customer) {
+                await tx.order.update({
+                    where: { id: order.id },
+                    data: { customerId: customer.id }
+                });
+            }
 
             // If dine-in order, update table status
             if (order.tableId) {
@@ -524,7 +539,7 @@ exports.getPaymentStats = async (req, res, next) => {
 // Record partial payment
 exports.recordPartialPayment = async (req, res, next) => {
     try {
-        const { orderId, amount, paymentMode } = req.body;
+        const { orderId, amount, paymentMode, customerName, customerPhone } = req.body;
 
         if (!orderId || !amount || !paymentMode) {
             return res.status(400).json({
@@ -579,16 +594,24 @@ exports.recordPartialPayment = async (req, res, next) => {
             const newTotalPaid = totalPaid + parseFloat(amount);
             const fullyPaid = Math.abs(newTotalPaid - parseFloat(order.total)) < 0.01;
 
+            // Find-or-create customer and link on full payment
+            const customer = fullyPaid
+                ? await findOrCreateCustomer(tx, customerName, customerPhone, order.total)
+                : null;
+
+            const orderUpdateData = {
+                status: fullyPaid ? 'PAID' : 'PARTIALLY_PAID',
+                paymentMode: fullyPaid
+                    ? paymentMode.toUpperCase()
+                    : `PAY_LATER+${paymentMode.toUpperCase()}`,
+                paidAt: fullyPaid ? new Date() : null
+            };
+            if (customer) orderUpdateData.customerId = customer.id;
+
             // Update order status
             const updatedOrder = await tx.order.update({
                 where: { id: order.id },
-                data: {
-                    status: fullyPaid ? 'PAID' : 'PARTIALLY_PAID',
-                    paymentMode: fullyPaid
-                        ? paymentMode.toUpperCase()
-                        : `PAY_LATER+${paymentMode.toUpperCase()}`,
-                    paidAt: fullyPaid ? new Date() : null
-                }
+                data: orderUpdateData
             });
 
             return { payment, updatedOrder, fullyPaid };

@@ -18,6 +18,7 @@ import {
   MapPin,
 } from "lucide-react";
 import Navbar from "../components/navbar";
+import { useSearchParams } from "react-router-dom";
 import { useSmartPolling } from "../hooks/useSmartPolling";
 import {
   formatApiError,
@@ -36,6 +37,8 @@ import config from "../config/businessConfig";
 
 const BillingPage = () => {
   const { menuItems, loading: menuLoading } = useMenu();
+  const [searchParams] = useSearchParams();
+  const tableParam = searchParams.get("table");
   const [tables, setTables] = useState([]);
   const [cart, setCart] = useState([]);
   const [tableId, setTableId] = useState(null);
@@ -155,6 +158,18 @@ const BillingPage = () => {
     };
   }, [fetchTables]);
 
+  // Pre-select table from URL param (?table=<id>) when navigating from Dashboard
+  useEffect(() => {
+    if (!tableParam || !tables.length) return;
+    const targetId = Number(tableParam);
+    if (!targetId) return;
+    const target = tables.find((t) => t.id === targetId);
+    if (target) {
+      setTableId(targetId);
+      setOrderType("DINE_IN");
+    }
+  }, [tables, tableParam]);
+
   const addToCart = (item) => {
     const menuItemId = item.id;
 
@@ -268,21 +283,16 @@ const BillingPage = () => {
       showWarning("Cart is empty!");
       return;
     }
-
-    // Table is required only for dine-in orders
     if (orderType === "DINE_IN" && !tableId) {
       showWarning("Please select a table for dine-in orders!");
       return;
     }
-
     const table =
       orderType === "DINE_IN" ? tables.find((t) => t.id === tableId) : null;
-
     if (orderType === "DINE_IN" && !table) {
       showError("Invalid table selected");
       return;
     }
-
     if (table && getStatus(table.status) === "reserved") {
       const from = table.reservedFrom ? new Date(table.reservedFrom) : null;
       const to = table.reservedUntil ? new Date(table.reservedUntil) : null;
@@ -307,9 +317,8 @@ const BillingPage = () => {
     }
 
     setLoading(true);
-    setError(null); // Clear previous errors
+    setError(null);
     try {
-      // UPDATED: Include notes, modifications, and order type
       const orderItems = cart.map((item) => ({
         menuItemId: item.menuItemId,
         quantity: item.quantity,
@@ -317,41 +326,26 @@ const BillingPage = () => {
         notes: item.notes || null,
         modifications: item.modifications || [],
       }));
-
-      const orderPayload = {
-        orderItems,
-        orderType,
-      };
-
-      // Only include tableId for dine-in orders
-      if (orderType === "DINE_IN" && tableId) {
-        orderPayload.tableId = tableId;
-      }
+      const orderPayload = { orderItems, orderType };
+      if (orderType === "DINE_IN" && tableId) orderPayload.tableId = tableId;
 
       const res = await axios.post("/api/orders", orderPayload);
       const createdOrder = res.data?.order || res.data;
       const billNumber = res.data?.billNumber ?? createdOrder?.billNumber;
-
-      if (!createdOrder || !createdOrder.id) {
+      if (!createdOrder || !createdOrder.id)
         throw new Error("Invalid order response");
-      }
 
-      // Show appropriate success message based on order type
       const orderTypeLabel =
         orderType === "DINE_IN"
           ? `Table ${getTableLabel(table)}`
           : orderType === "TAKEAWAY"
           ? "Takeaway"
           : "Delivery";
-
       showSuccess(
         `Order ${billNumber} placed for ${orderTypeLabel} - Pending kitchen review`,
       );
-
       setCart([]);
-      if (orderType === "DINE_IN") {
-        fetchTables();
-      }
+      if (orderType === "DINE_IN") fetchTables();
     } catch (err) {
       logError("Place Order", err);
       const apiError = formatApiError(err, "Failed to create order");
@@ -359,16 +353,12 @@ const BillingPage = () => {
         apiError.code,
         apiError.details,
       );
-
-      // Set structured error for display
       setError({
         ...friendlyError,
         message: apiError.message,
         code: apiError.code,
         details: apiError.details,
       });
-
-      // Scroll to top to show error
       window.scrollTo({ top: 0, behavior: "smooth" });
     } finally {
       setLoading(false);

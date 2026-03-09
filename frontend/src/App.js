@@ -20,6 +20,10 @@ import PendingPaymentsPage from "./pages/PendingPaymentsPage";
 import KitchenDisplay from "./pages/KitchenDisplay";
 import UnauthorizedPage from "./pages/UnauthorizedPage";
 import UserManagementPage from "./pages/UserManagementPage";
+import CustomersPage from "./pages/CustomersPage";
+import CustomerMenuPage from "./pages/CustomerMenuPage";
+import TableQRPage from "./pages/TableQRPage";
+import EODSettingsPage from "./pages/EODSettingsPage";
 
 const ProtectedRoute = ({ children, allowedRoles }) => {
   const { user, loading } = useAuth();
@@ -48,7 +52,7 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 };
 
 function AppContent() {
-  const { user, isChef } = useAuth();
+  const { isChef } = useAuth();
 
   // Redirect Chef users to kitchen display by default
   const DefaultRedirect = () => {
@@ -144,6 +148,13 @@ function AppContent() {
               </ProtectedRoute>
             } />
 
+            {/* Customer Management - Admin and Manager only */}
+            <Route path="/customers" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <CustomersPage />
+              </ProtectedRoute>
+            } />
+
             {/* User Management - Admin and Manager only */}
             <Route path="/users" element={
               <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
@@ -155,6 +166,23 @@ function AppContent() {
             <Route path="/kitchen" element={
               <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER', 'CHEF']}>
                 <KitchenDisplay />
+              </ProtectedRoute>
+            } />
+
+            {/* Table QR Codes - Admin and Manager */}
+            <Route path="/qr-codes" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <TableQRPage />
+              </ProtectedRoute>
+            } />
+
+            {/* Public digital menu — no auth (customer QR scan) */}
+            <Route path="/menu/:tableId" element={<CustomerMenuPage />} />
+
+            {/* End-of-Day Report settings — Admin and Manager */}
+            <Route path="/eod-settings" element={
+              <ProtectedRoute allowedRoles={['ADMIN', 'MANAGER']}>
+                <EODSettingsPage />
               </ProtectedRoute>
             } />
 

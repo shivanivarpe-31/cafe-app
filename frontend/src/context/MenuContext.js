@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import axios from 'axios';
+import { useAuth } from './AuthContext';
 
 const MenuContext = createContext();
 
@@ -12,6 +13,7 @@ export const useMenu = () => {
 export const MenuProvider = ({ children }) => {
     const [menuItems, setMenuItems] = useState([]);
     const [loading, setLoading] = useState(true);
+    const { user } = useAuth();
 
     // Memoize api instance so it doesn't change on every render
     const api = useMemo(() => {
@@ -58,16 +60,23 @@ export const MenuProvider = ({ children }) => {
     }, [api]);
 
     useEffect(() => {
-        const token = localStorage.getItem('token');
-        if (token) {
-            fetchMenu();
+        if (!user) {
+            if (abortControllerRef.current) {
+                abortControllerRef.current.abort();
+            }
+            setMenuItems([]);
+            setLoading(false);
+            return;
         }
+
+        fetchMenu();
+
         return () => {
             if (abortControllerRef.current) {
                 abortControllerRef.current.abort();
             }
         };
-    }, [fetchMenu]);
+    }, [user, fetchMenu]);
 
     const addItem = useCallback(async (item) => {
         const res = await api.post('/menu/items', item);

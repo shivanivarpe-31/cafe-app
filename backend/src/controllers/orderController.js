@@ -6,6 +6,7 @@ const {
     createValidationError,
     createOrderStatusError,
 } = require('../utils/errors');
+const { findOrCreateCustomer } = require('../utils/customerHelper');
 
 const { getPaginationParams, formatPaginatedResponse } = require('../utils/pagination');
 
@@ -198,8 +199,10 @@ exports.createOrder = async (req, res, next) => {
         const billNumber = generateBillNumber();
 
         const order = await prisma.$transaction(async (tx) => {
-            // Check ingredient availability
-            const missingIngredients = await checkIngredientAvailability(tx, orderItems);
+            // Check ingredient availability with pessimistic locking (FOR UPDATE)
+            // This prevents race conditions where two orders are created simultaneously
+            // and both pass the availability check before either deducts stock
+            const missingIngredients = await checkIngredientAvailability(tx, orderItems, true);
 
             if (missingIngredients.length > 0) {
                 throw createInsufficientStockError(missingIngredients);
@@ -407,8 +410,9 @@ exports.updateOrder = async (req, res, next) => {
         const total = subtotal + tax;
 
         const updatedOrder = await prisma.$transaction(async (tx) => {
-            // Check ingredient availability for new items
-            const missingIngredients = await checkIngredientAvailability(tx, orderItems);
+            // Check ingredient availability with pessimistic locking (FOR UPDATE)
+            // Prevents race condition where concurrent edits both pass the check
+            const missingIngredients = await checkIngredientAvailability(tx, orderItems, true);
 
             if (missingIngredients.length > 0) {
                 throw createInsufficientStockError(missingIngredients);
@@ -605,7 +609,7 @@ exports.getActiveOrders = async (req, res, next) => {
 
 exports.updateOrderStatus = async (req, res, next) => {
     try {
-        const { status: rawStatus, paymentMode } = req.body;
+        const { status: rawStatus, paymentMode, customerName, customerPhone } = req.body;
         const orderId = parseInt(req.params.id, 10);
 
         if (!Number.isFinite(orderId)) {
@@ -826,6 +830,25 @@ exports.updateOrderStatus = async (req, res, next) => {
             }
         });
 
+        // If marking PAID, find-or-create Customer and link to order
+        if (status === 'PAID' && (customerName || customerPhone)) {
+            try {
+                const customer = await findOrCreateCustomer(
+                    prisma, customerName, customerPhone, existingOrder.total
+                );
+                if (customer) {
+                    await prisma.order.update({
+                        where: { id: orderId },
+                        data: { customerId: customer.id }
+                    });
+                    order.customer = customer;
+                }
+            } catch (e) {
+                // Non-fatal — payment already recorded
+                console.error('Customer link error:', e.message);
+            }
+        }
+
         // Handle table status based on ALL orders for that table
         if ((status === 'PAID' || status === 'CANCELLED') && existingOrder.tableId) {
             const activeOrdersOnTable = await prisma.order.count({
@@ -881,9 +904,9 @@ exports.createPayLaterOrder = async (req, res, next) => {
         const { orderId, customerName, customerPhone, customerAddress } = req.body;
 
         // Validation
-        if (!orderId || !customerName || !customerPhone) {
+        if (!orderId) {
             return res.status(400).json({
-                error: 'Order ID, customer name, and phone are required'
+                error: 'Order ID is required'
             });
         }
 
@@ -900,23 +923,33 @@ exports.createPayLaterOrder = async (req, res, next) => {
         }
 
         await prisma.$transaction(async (tx) => {
-            // Create or update DeliveryInfo with customer details
-            await tx.deliveryInfo.upsert({
-                where: { orderId: order.id },
-                create: {
-                    orderId: order.id,
-                    customerName,
-                    customerPhone,
-                    deliveryAddress: customerAddress || '',
-                    deliveryStatus: 'DELIVERED',
-                    deliveryPlatform: 'DIRECT'
-                },
-                update: {
-                    customerName,
-                    customerPhone,
-                    deliveryAddress: customerAddress || ''
-                }
-            });
+            // Find-or-create Customer and link to order
+            const customer = await findOrCreateCustomer(tx, customerName, customerPhone, 0);
+            const orderUpdateData = {
+                status: 'PARTIALLY_PAID',
+                paymentMode: 'PAY_LATER'
+            };
+            if (customer) orderUpdateData.customerId = customer.id;
+
+            // Create or update DeliveryInfo with customer details (both fields required by schema)
+            if (customerName && customerPhone) {
+                await tx.deliveryInfo.upsert({
+                    where: { orderId: order.id },
+                    create: {
+                        orderId: order.id,
+                        customerName: customerName,
+                        customerPhone: customerPhone,
+                        deliveryAddress: customerAddress || '',
+                        deliveryStatus: 'DELIVERED',
+                        deliveryPlatform: 'DIRECT'
+                    },
+                    update: {
+                        customerName: customerName,
+                        customerPhone: customerPhone,
+                        deliveryAddress: customerAddress || ''
+                    }
+                });
+            }
 
             // Create Pay Later payment record
             await tx.payment.create({
@@ -927,8 +960,8 @@ exports.createPayLaterOrder = async (req, res, next) => {
                     paymentMode: 'PAY_LATER',
                     status: 'PENDING',
                     notes: JSON.stringify({
-                        customerName,
-                        customerPhone,
+                        customerName: customerName || null,
+                        customerPhone: customerPhone || null,
                         customerAddress: customerAddress || '',
                         totalDue: order.total
                     })
@@ -938,10 +971,7 @@ exports.createPayLaterOrder = async (req, res, next) => {
             // Update order
             await tx.order.update({
                 where: { id: order.id },
-                data: {
-                    status: 'PARTIALLY_PAID',
-                    paymentMode: 'PAY_LATER'
-                }
+                data: orderUpdateData
             });
 
             // Update table status if order has a table
@@ -1008,6 +1038,7 @@ exports.getPendingPayments = async (req, res, next) => {
                     },
                     table: true,
                     deliveryInfo: true,
+                    customer: true,
                     payments: {
                         orderBy: { createdAt: 'desc' }
                     }

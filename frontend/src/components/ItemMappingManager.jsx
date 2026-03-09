@@ -3,7 +3,7 @@
  * Displays and manages menu item to platform ID mappings
  */
 
-import React, { useState, useContext, useEffect } from "react";
+import React, { useState, useContext } from "react";
 import IntegrationContext from "../context/IntegrationContext";
 import "./ItemMappingManager.css";
 
@@ -11,11 +11,8 @@ const ItemMappingManager = () => {
   const {
     mappings,
     stats,
-    selectedPlatform,
-    setSelectedPlatform,
     handleCreateMapping,
     handleDeleteMapping,
-    loadMappings,
     error,
     loading,
   } = useContext(IntegrationContext);

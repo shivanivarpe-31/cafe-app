@@ -12,6 +12,7 @@ router.get('/categories', auth, allRoles, menuController.getCategories);  // All
 
 // Management routes - Admin and Manager only
 router.get('/items/detailed', auth, adminOrManager, menuController.getDetailedMenuItems);  // Full data for management
+router.get('/recipe-costing', auth, adminOnly, menuController.getRecipeCosting); // Recipe cost & margin data
 router.post('/items', auth, adminOrManager, menuController.createMenuItem);
 router.put('/items/:id', auth, adminOrManager, menuController.updateMenuItem);
 

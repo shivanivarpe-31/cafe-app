@@ -197,11 +197,11 @@ async function processSwiggyOrderPlaced(payload, webhookLogId) {
     try {
         const items = payload.items || payload.order_items || [];
 
-        // Map items using platformItemMapping table
+        // Map items using menuItemMapping table
         const mappedItems = [];
         for (const item of items) {
             // First try exact ID match
-            let mapping = await prisma.platformItemMapping.findFirst({
+            let mapping = await prisma.menuItemMapping.findFirst({
                 where: {
                     platform: 'SWIGGY',
                     platformItemId: item.item_id?.toString() || item.id?.toString()

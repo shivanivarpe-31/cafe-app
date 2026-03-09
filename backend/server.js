@@ -7,7 +7,8 @@ const fs = require('fs');
 const errorHandler = require('./src/middleware/errorHandler');
 const requestLogger = require('./src/middleware/requestLogger');
 const { loginLimiter, apiLimiter, createOrderLimiter, paymentLimiter } = require('./src/middleware/rateLimiter');
-const { startReservationScheduler } = require('./src/utils/scheduler');
+const { startReservationScheduler, startEODScheduler } = require('./src/utils/scheduler');
+const { readConfig } = require('./src/utils/eodConfig');
 const logger = require('./src/utils/logger');
 
 dotenv.config();
@@ -130,6 +131,14 @@ const payLimiter = process.env.NODE_ENV === 'production' ? paymentLimiter : (req
 app.use('/api/payment', payLimiter, require('./src/routes/payment'));
 app.use('/api/kitchen', require('./src/routes/kitchen'));
 app.use('/api/integration', require('./src/routes/platformIntegration'));
+app.use('/api/customers', require('./src/routes/customers'));
+
+// Public digital-menu / QR self-ordering (no auth required, rate-limited in production)
+const guestLimiter = process.env.NODE_ENV === 'production' ? createOrderLimiter : (req, res, next) => next();
+app.use('/api/guest', guestLimiter, require('./src/routes/guest'));
+
+// End-of-Day report routes
+app.use('/api/eod', require('./src/routes/eod'));
 
 app.use(errorHandler);
 
@@ -150,6 +159,8 @@ if (SSL_KEY && SSL_CERT && fs.existsSync(SSL_KEY) && fs.existsSync(SSL_CERT)) {
             frontend: process.env.FRONTEND_URL || 'http://localhost:3000'
         });
         startReservationScheduler(1);
+        const eodCfgHttps = readConfig();
+        startEODScheduler(eodCfgHttps.sendTime);
     });
 } else {
     app.listen(PORT, () => {
@@ -158,5 +169,7 @@ if (SSL_KEY && SSL_CERT && fs.existsSync(SSL_KEY) && fs.existsSync(SSL_CERT)) {
             frontend: process.env.FRONTEND_URL || 'http://localhost:3000'
         });
         startReservationScheduler(1);
+        const eodCfgHttp = readConfig();
+        startEODScheduler(eodCfgHttp.sendTime);
     });
 }

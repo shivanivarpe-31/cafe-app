@@ -30,6 +30,7 @@ import {
   filterMenuItems,
   separateActiveItems,
   getAllCategories,
+  getLowStockIngredients,
 } from "../utils/menuHelpers";
 import { useDebounce } from "../hooks/useDebounce";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
@@ -38,7 +39,6 @@ import {
   MenuItemRow,
   MenuTableSkeleton,
 } from "../components/menu/MenuItemCard";
-import StockUpdateModal from "../components/menu/StockUpdateModal";
 import { EmptyState } from "../components/EmptyState";
 
 const MenuPage = () => {
@@ -55,8 +55,6 @@ const MenuPage = () => {
   const [searchTerm, setSearchTerm] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [categories, setCategories] = useState([]);
-  const [showStockModal, setShowStockModal] = useState(false);
-  const [stockItem, setStockItem] = useState(null);
   const [form, setForm] = useState(DEFAULT_FORM_STATE);
 
   // View & Sort options
@@ -74,7 +72,6 @@ const MenuPage = () => {
   const [submitting, setSubmitting] = useState(false);
   const [deleting, setDeleting] = useState(null);
   const [toggling, setToggling] = useState(null);
-  const [updatingStock, setUpdatingStock] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
   // Refs for cleanup and focus management
@@ -240,44 +237,6 @@ const MenuPage = () => {
     }
   };
 
-  const openStockModal = (item) => {
-    setStockItem(item);
-    setShowStockModal(true);
-  };
-
-  const closeStockModal = () => {
-    setShowStockModal(false);
-    setStockItem(null);
-  };
-
-  const updateStock = async (newQuantity) => {
-    if (!stockItem?.inventory?.id) {
-      showWarning("No inventory record found for this item");
-      return;
-    }
-
-    if (isNaN(newQuantity) || newQuantity < 0) {
-      showWarning("Please enter a valid quantity");
-      return;
-    }
-
-    setUpdatingStock(true);
-    try {
-      await axios.put(`/api/inventory/${stockItem.inventory.id}`, {
-        quantity: newQuantity,
-      });
-      showSuccess(`Stock updated to ${newQuantity} units!`);
-      closeStockModal();
-      fetchMenu(); // Refresh menu to get updated stock
-    } catch (err) {
-      showError(
-        "Failed to update stock: " + (err.response?.data?.error || err.message),
-      );
-    } finally {
-      setUpdatingStock(false);
-    }
-  };
-
   // Handle view mode change with persistence
   const handleViewModeChange = (mode) => {
     setViewMode(mode);
@@ -308,7 +267,6 @@ const MenuPage = () => {
     n: () => !showForm && setShowForm(true),
     escape: () => {
       if (showForm) cancelForm();
-      if (showStockModal) closeStockModal();
       if (showFilters) setShowFilters(false);
       if (showKeyboardHelp) setShowKeyboardHelp(false);
     },
@@ -345,8 +303,8 @@ const MenuPage = () => {
           bVal = parseFloat(b.price);
           break;
         case "stock":
-          aVal = a.inventory?.quantity ?? 0;
-          bVal = b.inventory?.quantity ?? 0;
+          aVal = getLowStockIngredients(a).length;
+          bVal = getLowStockIngredients(b).length;
           break;
         case "category":
           aVal = a.category?.name?.toLowerCase() || "";
@@ -789,7 +747,6 @@ const MenuPage = () => {
                   onEdit={handleEdit}
                   onDelete={handleDelete}
                   onToggleActive={handleToggleActive}
-                  onUpdateStock={openStockModal}
                   isDeleting={deleting === item.id}
                   isToggling={toggling === item.id}
                 />
@@ -857,7 +814,7 @@ const MenuPage = () => {
                       onClick={() => handleSort("stock")}
                     >
                       <span className="flex items-center gap-2 justify-center">
-                        Stock
+                        Ingredients
                         <SortIcon columnKey="stock" />
                       </span>
                     </th>
@@ -883,7 +840,6 @@ const MenuPage = () => {
                       onEdit={handleEdit}
                       onDelete={handleDelete}
                       onToggleActive={handleToggleActive}
-                      onUpdateStock={openStockModal}
                       isDeleting={deleting === item.id}
                       isToggling={toggling === item.id}
                     />
@@ -916,15 +872,6 @@ const MenuPage = () => {
           </div>
         )}
       </div>
-
-      {/* Stock Update Modal */}
-      <StockUpdateModal
-        isOpen={showStockModal}
-        onClose={closeStockModal}
-        item={stockItem}
-        onUpdate={updateStock}
-        isUpdating={updatingStock}
-      />
 
       {/* Keyboard Shortcuts Help Modal */}
       {showKeyboardHelp && (

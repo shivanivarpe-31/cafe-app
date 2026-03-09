@@ -115,7 +115,11 @@ const OrdersPage = () => {
       filtered = filtered.filter(
         (order) =>
           order.billNumber?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-          order.table?.number?.toString().includes(searchTerm),
+          order.table?.number?.toString().includes(searchTerm) ||
+          order.customerName
+            ?.toLowerCase()
+            .includes(searchTerm.toLowerCase()) ||
+          order.customerPhone?.includes(searchTerm),
       );
     }
 
@@ -235,6 +239,16 @@ const OrdersPage = () => {
           </div>
           
           <div class="info"><strong>Bill No:</strong> ${order.billNumber}</div>
+          ${
+            order.customerName
+              ? `<div class="info"><strong>Customer:</strong> ${order.customerName}</div>`
+              : ""
+          }
+          ${
+            order.customerPhone
+              ? `<div class="info"><strong>Mobile:</strong> ${order.customerPhone}</div>`
+              : ""
+          }
           <div class="info"><strong>Table:</strong> ${
             order.table?.number || order.orderType
           }</div>
@@ -544,6 +558,18 @@ const OrdersPage = () => {
                       </span>
                     </span>
                   </div>
+                  {(order.customerName || order.customerPhone) && (
+                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-gray-100">
+                      <span className="text-xs font-medium text-gray-700 truncate max-w-[50%]">
+                        👤 {order.customerName || "—"}
+                      </span>
+                      {order.customerPhone && (
+                        <span className="text-xs text-gray-500">
+                          📞 {order.customerPhone}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* Order Items */}
@@ -751,6 +777,26 @@ const OrdersPage = () => {
                   </p>
                 </div>
               </div>
+
+              {(selectedOrder.customerName || selectedOrder.customerPhone) && (
+                <div className="bg-blue-50 border border-blue-100 rounded-xl p-3 flex items-center gap-4">
+                  <div className="w-9 h-9 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                    <span className="text-base">👤</span>
+                  </div>
+                  <div>
+                    {selectedOrder.customerName && (
+                      <p className="text-sm font-semibold text-gray-900">
+                        {selectedOrder.customerName}
+                      </p>
+                    )}
+                    {selectedOrder.customerPhone && (
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        📞 {selectedOrder.customerPhone}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
 
               <div className="border-t pt-4">
                 <h4 className="font-semibold mb-3 flex items-center">
