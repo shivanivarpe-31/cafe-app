@@ -15,6 +15,44 @@ import {
 } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+// Reusable labeled input field — defined outside Login to avoid re-creation on each render
+const Field = ({
+  label,
+  icon: Icon,
+  type = "text",
+  value,
+  onChange,
+  placeholder,
+  required,
+  minLength,
+  rightSlot,
+}) => (
+  <div className="space-y-1.5">
+    <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider">
+      {label}
+    </label>
+    <div className="relative">
+      <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400">
+        <Icon className="w-4 h-4" />
+      </span>
+      <input
+        type={type}
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        required={required}
+        minLength={minLength}
+        className="w-full pl-10 pr-10 py-3 text-sm bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-brand-400 focus:bg-white transition-all duration-150"
+      />
+      {rightSlot && (
+        <span className="absolute right-3 top-1/2 -translate-y-1/2">
+          {rightSlot}
+        </span>
+      )}
+    </div>
+  </div>
+);
+
 const Login = () => {
   const isDevPrefill =
     process.env.NODE_ENV === "development" &&
@@ -112,44 +150,6 @@ const Login = () => {
   const showDemoPanel = process.env.REACT_APP_SHOW_DEMO === "true";
   const demoEmail = process.env.REACT_APP_DEMO_EMAIL || "";
   const demoPassword = process.env.REACT_APP_DEMO_PASSWORD || "";
-
-  // Reusable labeled input field
-  const Field = ({
-    label,
-    icon: Icon,
-    type = "text",
-    value,
-    onChange,
-    placeholder,
-    required,
-    minLength,
-    rightSlot,
-  }) => (
-    <div className="space-y-1.5">
-      <label className="block text-xs font-semibold text-gray-500 uppercase tracking-wider">
-        {label}
-      </label>
-      <div className="relative">
-        <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400">
-          <Icon className="w-4 h-4" />
-        </span>
-        <input
-          type={type}
-          value={value}
-          onChange={onChange}
-          placeholder={placeholder}
-          required={required}
-          minLength={minLength}
-          className="w-full pl-10 pr-10 py-3 text-sm bg-gray-50 border border-gray-200 rounded-xl text-gray-900 placeholder:text-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-300 focus:border-brand-400 focus:bg-white transition-all duration-150"
-        />
-        {rightSlot && (
-          <span className="absolute right-3 top-1/2 -translate-y-1/2">
-            {rightSlot}
-          </span>
-        )}
-      </div>
-    </div>
-  );
 
   if (checkingSetup) {
     return (
