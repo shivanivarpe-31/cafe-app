@@ -19,10 +19,10 @@ async function main() {
                 create: {
                     email: ownerEmail,
                     password: bcrypt.hashSync(ownerPassword, 12),
-                    role: 'owner'
+                    role: 'ADMIN'
                 }
             });
-            console.log('✅ Owner seeded');
+            console.log('✅ Admin seeded');
         } else {
             console.log('ℹ️ Skipping owner creation. To create an owner, set SEED_OWNER_EMAIL and SEED_OWNER_PASSWORD in your environment.');
         }
