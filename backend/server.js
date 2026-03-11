@@ -146,7 +146,7 @@ const frontendBuildPath = path.join(__dirname, '..', 'frontend', 'build');
 if (fs.existsSync(frontendBuildPath)) {
     app.use(express.static(frontendBuildPath));
     // SPA fallback: any non-API route serves index.html
-    app.get('*', (req, res, next) => {
+    app.get('/{*splat}', (req, res, next) => {
         if (req.path.startsWith('/api/')) return next();
         res.sendFile(path.join(frontendBuildPath, 'index.html'));
     });

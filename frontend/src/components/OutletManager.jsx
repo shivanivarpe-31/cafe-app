@@ -124,7 +124,8 @@ const OutletManager = () => {
     }
   };
 
-  const handleUpdateZomatoTimings = async (timingsObj) => { // eslint-disable-line no-unused-vars
+  const handleUpdateZomatoTimings = async (timingsObj) => {
+    // eslint-disable-line no-unused-vars
     try {
       const result = await updateZomatoDeliveryTimings(timingsObj);
       showMsg(result.message || "Zomato timings updated");
@@ -134,7 +135,8 @@ const OutletManager = () => {
     }
   };
 
-  const handleUpdateSelfTimings = async (timingsObj) => { // eslint-disable-line no-unused-vars
+  const handleUpdateSelfTimings = async (timingsObj) => {
+    // eslint-disable-line no-unused-vars
     try {
       const result = await updateSelfDeliveryTimings(timingsObj);
       showMsg(result.message || "Self-delivery timings updated");
