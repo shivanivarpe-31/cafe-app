@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const dotenv = require('dotenv');
 const helmet = require('helmet');
 const https = require('https');
@@ -139,6 +140,17 @@ app.use('/api/guest', guestLimiter, require('./src/routes/guest'));
 
 // End-of-Day report routes
 app.use('/api/eod', require('./src/routes/eod'));
+
+// --- Serve React frontend in production ---
+const frontendBuildPath = path.join(__dirname, '..', 'frontend', 'build');
+if (fs.existsSync(frontendBuildPath)) {
+    app.use(express.static(frontendBuildPath));
+    // SPA fallback: any non-API route serves index.html
+    app.get('*', (req, res, next) => {
+        if (req.path.startsWith('/api/')) return next();
+        res.sendFile(path.join(frontendBuildPath, 'index.html'));
+    });
+}
 
 app.use(errorHandler);
 
