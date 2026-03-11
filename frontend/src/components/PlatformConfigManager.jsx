@@ -37,7 +37,7 @@ const DEFAULT_CONFIG = {
 
 const PlatformConfigManager = () => {
   const {
-    loading,
+    loading, // eslint-disable-line no-unused-vars
     getPlatformConfigs,
     updatePlatformConfig,
     testPlatformConnection,

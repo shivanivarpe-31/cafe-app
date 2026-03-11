@@ -14,8 +14,6 @@ import {
   UtensilsCrossed,
   Phone,
   MapPin,
-  ChevronRight,
-  Star,
 } from "lucide-react";
 import { useParams } from "react-router-dom";
 

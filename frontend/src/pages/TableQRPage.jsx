@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback } from "react";
 import axios from "axios";
 import {
   QrCode,
@@ -11,7 +11,6 @@ import {
   Search,
   X,
   Table2,
-  Wifi,
   WifiOff,
   Info,
 } from "lucide-react";

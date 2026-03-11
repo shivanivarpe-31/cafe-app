@@ -81,7 +81,7 @@ const MenuSyncManager = () => {
   };
 
   // Toggle single item stock
-  const handleToggleStock = async (menuItemId, itemName, currentInStock) => {
+  const handleToggleStock = async (menuItemId, itemName, currentInStock) => { // eslint-disable-line no-unused-vars
     try {
       await toggleItemStock(selectedPlatform, menuItemId, !currentInStock);
       showMessage(
