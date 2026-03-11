@@ -171,8 +171,27 @@ const Login = () => {
   }
 
   return (
-    <div className="min-h-screen flex">
-      {/* Left Panel */}
+    <div className="min-h-screen flex flex-col lg:flex-row">
+      {/* Mobile Header — visible only on small screens */}
+      <div
+        className="lg:hidden w-full px-5 py-6 flex items-center gap-3"
+        style={{
+          background:
+            "linear-gradient(145deg, #ef4444 0%, #dc2626 40%, #b91c1c 100%)",
+        }}
+      >
+        <div className="w-10 h-10 bg-white/20 backdrop-blur-sm rounded-xl flex items-center justify-center border border-white/30">
+          <ShoppingCart className="w-5 h-5 text-white" />
+        </div>
+        <div>
+          <p className="text-white font-bold text-lg leading-none">EatSy</p>
+          <p className="text-red-200 text-[10px] font-medium tracking-widest uppercase mt-0.5">
+            POS System
+          </p>
+        </div>
+      </div>
+
+      {/* Left Panel — hidden on mobile */}
       <div
         className="hidden lg:flex lg:w-[45%] xl:w-[40%] flex-col justify-between p-10 relative overflow-hidden"
         style={{
@@ -242,12 +261,12 @@ const Login = () => {
       </div>
 
       {/* Right Panel */}
-      <div className="flex-1 flex flex-col justify-center items-center px-6 py-12 bg-gray-50">
+      <div className="flex-1 flex flex-col justify-center items-center px-4 sm:px-6 py-8 sm:py-12 bg-gray-50">
         <div className="w-full max-w-[400px] animate-fade-up">
           {needsSetup ? (
             /* ── Initial Setup Form ── */
             <div
-              className="bg-white rounded-2xl border border-black/[.07] p-8"
+              className="bg-white rounded-2xl border border-black/[.07] p-5 sm:p-8"
               style={{
                 boxShadow:
                   "0 4px 24px rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.04)",
@@ -383,7 +402,7 @@ const Login = () => {
             /* ── Sign In Form ── */
             <>
               <div
-                className="bg-white rounded-2xl border border-black/[.07] p-8"
+                className="bg-white rounded-2xl border border-black/[.07] p-5 sm:p-8"
                 style={{
                   boxShadow:
                     "0 4px 24px rgba(0,0,0,.08), 0 1px 0 rgba(0,0,0,.04)",
@@ -400,7 +419,7 @@ const Login = () => {
                   >
                     <ShoppingCart className="w-5 h-5 text-white" />
                   </div>
-                  <h2 className="text-2xl font-bold text-gray-900 tracking-tight">
+                  <h2 className="text-xl sm:text-2xl font-bold text-gray-900 tracking-tight">
                     Welcome back
                   </h2>
                   <p className="text-sm text-gray-500 mt-1">
@@ -491,6 +510,10 @@ const Login = () => {
             </>
           )}
         </div>
+        {/* Mobile footer */}
+        <p className="lg:hidden text-gray-400 text-xs mt-8 text-center">
+          © 2026 {config.restaurant.name}. All rights reserved.
+        </p>
       </div>
     </div>
   );
