@@ -20,6 +20,7 @@ import {
   Zap,
   Settings,
   PieChart,
+  Plug,
 } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import KeyboardShortcutsHelp from "./KeyboardShortcutsHelp";
@@ -104,10 +105,10 @@ const Navbar = () => {
   const NavLink = ({ to, icon: Icon, label }) => (
     <Link
       to={to}
-      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 ${
+      className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm font-medium transition-all duration-150 border ${
         isActive(to)
-          ? "bg-brand-50 text-brand-600"
-          : "text-ink-500 hover:text-ink-900 hover:bg-surface-100"
+          ? "bg-red-50 text-red-500 border-red-500 shadow-[0_0_0_2px_rgba(239,68,68,0.15)]"
+          : "border-transparent text-ink-500 hover:text-ink-900 hover:bg-surface-100"
       }`}
     >
       <Icon className="w-4 h-4 shrink-0" />
@@ -194,11 +195,12 @@ const Navbar = () => {
   );
 
   // Dropdown data
-  const managePaths = ["/menu", "/inventory", "/delivery"];
+  const managePaths = ["/menu", "/inventory", "/delivery", "/integration"];
   const manageItems = [
     { to: "/menu", icon: Menu, label: "Menu Manager" },
     { to: "/inventory", icon: Beaker, label: "Inventory" },
     { to: "/delivery", icon: Truck, label: "Delivery" },
+    { to: "/integration", icon: Plug, label: "Integrations" },
   ];
 
   const analyticsPaths = ["/reports", "/profit-analysis", "/eod-settings"];
@@ -308,10 +310,11 @@ const Navbar = () => {
                   style={{
                     background: "linear-gradient(135deg,#ef4444,#dc2626)",
                     boxShadow: "0 3px 10px rgba(220,38,38,.30)",
+                    color: "#ffffff",
                   }}
                 >
-                  <ShoppingCart className="w-4 h-4" />
-                  <span>New Order</span>
+                  <ShoppingCart className="w-4 h-4 text-white" />
+                  <span className="text-white">New Order</span>
                 </Link>
               )}
 

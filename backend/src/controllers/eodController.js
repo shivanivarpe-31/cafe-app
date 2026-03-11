@@ -156,3 +156,16 @@ exports.testSmtp = async (req, res) => {
         res.status(400).json({ ok: false, error: err.message });
     }
 };
+
+// ─── POST /api/eod/test-whatsapp ──────────────────────────────────────────────
+exports.testWhatsApp = async (req, res) => {
+    try {
+        const { verifyTwilio } = getWhatsAppSender();
+        await verifyTwilio();
+        res.json({ ok: true, message: 'Twilio WhatsApp credentials verified.' });
+    } catch (err) {
+        logger.error('Twilio test failed', { error: err.message, code: err.code, stack: err.stack });
+        const msg = err.response?.data?.message || err.message;
+        res.status(400).json({ ok: false, error: msg });
+    }
+};

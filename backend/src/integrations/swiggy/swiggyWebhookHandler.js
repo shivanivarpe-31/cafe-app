@@ -7,6 +7,7 @@ const { prisma } = require('../../prisma');
 const verifySwiggySignature = require('../../utils/verifySwiggySignature');
 const WebhookRetryQueue = require('../../utils/webhookRetryQueue');
 const { logIntegrationEvent } = require('../../utils/integrationLogger');
+const { confirmOrder } = require('./swiggyApiClient');
 const logger = require('../../utils/logger');
 const config = require('../../config/businessConfig');
 
@@ -26,7 +27,16 @@ async function handleSwiggyWebhook(req, res) {
         });
 
         // 1️⃣ SIGNATURE VERIFICATION
-        const secret = process.env.SWIGGY_WEBHOOK_SECRET;
+        // Try DB config first, fall back to env var
+        let secret;
+        try {
+            const platformConfig = await prisma.platformConfig.findUnique({
+                where: { platform: 'SWIGGY' }
+            });
+            secret = platformConfig?.webhookSecret || process.env.SWIGGY_WEBHOOK_SECRET;
+        } catch {
+            secret = process.env.SWIGGY_WEBHOOK_SECRET;
+        }
         if (!secret) {
             logger.error('[SWIGGY WEBHOOK] SWIGGY_WEBHOOK_SECRET not configured');
             return res.status(500).json({
@@ -295,7 +305,8 @@ async function processSwiggyOrderPlaced(payload, webhookLogId) {
                                 payload.special_request || null,
                             deliveryFee,
                             packagingFee,
-                            webhookLogId
+                            webhookLogId,
+                            orderTags: payload.order_tags ? JSON.stringify(payload.order_tags) : null
                         }
                     }
                 },
@@ -327,6 +338,41 @@ async function processSwiggyOrderPlaced(payload, webhookLogId) {
 
             return newOrder;
         });
+
+        // AUTO-CONFIRM if autoAcceptOrders is enabled
+        try {
+            const platformConfig = await prisma.platformConfig.findUnique({
+                where: { platform: 'SWIGGY' }
+            });
+            if (platformConfig?.autoAcceptOrders) {
+                await confirmOrder(
+                    payload.order_id?.toString(),
+                    platformConfig.defaultPrepTime || 30
+                );
+
+                await prisma.order.update({
+                    where: { id: order.id },
+                    data: { status: 'PREPARING' }
+                });
+                await prisma.deliveryInfo.update({
+                    where: { orderId: order.id },
+                    data: {
+                        deliveryStatus: 'CONFIRMED',
+                        confirmationStatus: 'ACCEPTED',
+                        confirmedAt: new Date(),
+                        preparationTime: platformConfig.defaultPrepTime || 30
+                    }
+                });
+
+                logger.info('[SWIGGY] Order auto-confirmed', {
+                    platformOrderId: payload.order_id
+                });
+            }
+        } catch (confirmError) {
+            logger.warn('[SWIGGY] Auto-confirm failed, manual confirmation needed', {
+                error: confirmError.message
+            });
+        }
 
         await logIntegrationEvent(
             'SWIGGY',
@@ -383,14 +429,18 @@ async function processSwiggyOrderConfirmed(payload, webhookLogId) {
             throw new Error(`Order ${platformOrderId} not found`);
         }
 
+        // CONFIRMED maps to PREPARING in our OrderStatus enum
         await prisma.order.update({
             where: { id: deliveryInfo.orderId },
-            data: { status: 'CONFIRMED' }
+            data: { status: 'PREPARING' }
         });
 
         await prisma.deliveryInfo.update({
             where: { id: deliveryInfo.id },
-            data: { deliveryStatus: 'CONFIRMED' }
+            data: {
+                deliveryStatus: 'CONFIRMED',
+                confirmedAt: new Date()
+            }
         });
 
         return { success: true, orderId: deliveryInfo.orderId };
@@ -420,7 +470,7 @@ async function processSwiggyOrderReady(payload, webhookLogId) {
 
         await prisma.order.update({
             where: { id: deliveryInfo.orderId },
-            data: { status: 'READY' }
+            data: { status: 'SERVED' }
         });
 
         await prisma.deliveryInfo.update({
@@ -461,6 +511,12 @@ async function processSwiggyOrderPickedUp(payload, webhookLogId) {
             }
         });
 
+        // Also update order status
+        await prisma.order.update({
+            where: { id: deliveryInfo.orderId },
+            data: { status: 'PAID' }
+        });
+
         return { success: true, orderId: deliveryInfo.orderId };
     } catch (error) {
         throw new Error(`Failed to update pickup status: ${error.message}`);
@@ -486,11 +542,12 @@ async function processSwiggyOrderDelivered(payload, webhookLogId) {
             throw new Error(`Order ${platformOrderId} not found`);
         }
 
+        // DELIVERED maps to PAID in our OrderStatus enum
         await prisma.order.update({
             where: { id: deliveryInfo.orderId },
             data: {
-                status: 'COMPLETED',
-                completedAt: new Date()
+                status: 'PAID',
+                paidAt: new Date()
             }
         });
 
@@ -520,7 +577,7 @@ async function processSwiggyOrderCancelled(payload, webhookLogId) {
                 deliveryPlatform: 'SWIGGY',
                 platformOrderId
             },
-            include: { order: true }
+            include: { order: { include: { items: true } } }
         });
 
         if (!deliveryInfo) {
@@ -530,14 +587,36 @@ async function processSwiggyOrderCancelled(payload, webhookLogId) {
             return { success: true };
         }
 
-        await prisma.order.update({
-            where: { id: deliveryInfo.orderId },
-            data: { status: 'CANCELLED' }
-        });
+        const wasPreparing = ['PREPARING', 'SERVED'].includes(deliveryInfo.order.status);
 
-        await prisma.deliveryInfo.update({
-            where: { id: deliveryInfo.id },
-            data: { deliveryStatus: 'CANCELLED' }
+        await prisma.$transaction(async (tx) => {
+            await tx.order.update({
+                where: { id: deliveryInfo.orderId },
+                data: { status: 'CANCELLED' }
+            });
+
+            await tx.deliveryInfo.update({
+                where: { id: deliveryInfo.id },
+                data: { deliveryStatus: 'CANCELLED' }
+            });
+
+            // Refund ingredients if order was already being prepared
+            if (wasPreparing) {
+                for (const orderItem of deliveryInfo.order.items) {
+                    const recipe = await tx.menuItemIngredient.findMany({
+                        where: { menuItemId: orderItem.menuItemId }
+                    });
+                    for (const recipeItem of recipe) {
+                        await tx.ingredient.update({
+                            where: { id: recipeItem.ingredientId },
+                            data: { currentStock: { increment: recipeItem.quantity * orderItem.quantity } }
+                        });
+                    }
+                }
+                logger.info('[SWIGGY] Ingredients refunded for cancelled order', {
+                    orderId: deliveryInfo.orderId
+                });
+            }
         });
 
         return { success: true, orderId: deliveryInfo.orderId };
@@ -569,19 +648,17 @@ async function processSwiggyOrderRejected(payload, webhookLogId) {
             return { success: true };
         }
 
+        // REJECTED maps to CANCELLED in our OrderStatus enum
         await prisma.order.update({
             where: { id: deliveryInfo.orderId },
-            data: {
-                status: 'REJECTED',
-                notes: `Rejected by partner: ${reason}`
-            }
+            data: { status: 'CANCELLED' }
         });
 
         await prisma.deliveryInfo.update({
             where: { id: deliveryInfo.id },
             data: {
-                deliveryStatus: 'REJECTED',
-                specialInstructions: `Rejection reason: ${reason}`
+                deliveryStatus: 'CANCELLED',
+                rejectionReason: reason
             }
         });
 

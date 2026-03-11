@@ -130,6 +130,11 @@ exports.createOrder = async (req, res, next) => {
             throw createValidationError('tableId', 'Table is required for dine-in orders');
         }
 
+        // Mutual exclusivity: dine-in must have tableId, delivery/takeaway must NOT
+        if (orderType !== 'DINE_IN' && tableId) {
+            throw createValidationError('tableId', 'Table cannot be assigned to delivery or takeaway orders');
+        }
+
         // Fetch actual prices from the database (never trust client-submitted prices)
         const menuItemIds = [...new Set(orderItems.map(item => item.menuItemId))];
         const dbMenuItems = await prisma.menuItem.findMany({
@@ -308,7 +313,13 @@ exports.createOrder = async (req, res, next) => {
     }
 };
 
-// Update order items (only for PENDING orders)
+// Update order items — real POS flow:
+//   • Keep existing DB rows that haven't changed (preserving prep status)
+//   • For quantity increases on an already-cooked item, add a NEW row for the extra qty (goes to kitchen as PENDING)
+//   • For quantity decreases, update the row (only allowed if item is still PENDING)
+//   • For removed items, delete them (refund ingredients if already deducted)
+//   • For brand-new items, insert new rows (PENDING prep, goes to kitchen)
+//   • Set order status back to PREPARING only when new PENDING items exist
 exports.updateOrder = async (req, res, next) => {
     try {
         const orderId = parseInt(req.params.id, 10);
@@ -322,11 +333,15 @@ exports.updateOrder = async (req, res, next) => {
             throw createValidationError('orderItems', 'Order items are required');
         }
 
-        // Get existing order
+        // Get existing order with full item details
         const existingOrder = await prisma.order.findUnique({
             where: { id: orderId },
             include: {
-                items: true,
+                items: {
+                    include: {
+                        modifications: true
+                    }
+                },
                 table: true
             }
         });
@@ -390,84 +405,152 @@ exports.updateOrder = async (req, res, next) => {
 
         // Calculate new totals using server-side prices
         let subtotal = 0;
-
         for (const item of orderItems) {
             const serverPrice = parseFloat(menuItemPriceMap.get(item.menuItemId).price);
             let itemTotal = serverPrice * item.quantity;
-
-            // Add modification charges using server-side prices
             if (item.modifications && item.modifications.length > 0) {
                 for (const mod of item.modifications) {
                     const serverModPrice = parseFloat(modPriceMap.get(mod.id).price);
                     itemTotal += serverModPrice * (mod.quantity || 1) * item.quantity;
                 }
             }
-
             subtotal += itemTotal;
         }
 
         const tax = subtotal * config.tax.rate;
         const total = subtotal + tax;
 
-        const updatedOrder = await prisma.$transaction(async (tx) => {
-            // Check ingredient availability with pessimistic locking (FOR UPDATE)
-            // Prevents race condition where concurrent edits both pass the check
-            const missingIngredients = await checkIngredientAvailability(tx, orderItems, true);
+        const ingredientsAlreadyDeducted = ['PREPARING', 'SERVED'].includes(existingOrder.status);
 
-            if (missingIngredients.length > 0) {
-                throw createInsufficientStockError(missingIngredients);
+        const updatedOrder = await prisma.$transaction(async (tx) => {
+            // ── Build a diff between old items and new items ──────────────
+            // Index existing items by menuItemId (group if same menuItem appears multiple times)
+            const oldItemsByMenu = new Map(); // menuItemId → [orderItemRow, ...]
+            for (const old of existingOrder.items) {
+                if (!oldItemsByMenu.has(old.menuItemId)) {
+                    oldItemsByMenu.set(old.menuItemId, []);
+                }
+                oldItemsByMenu.get(old.menuItemId).push(old);
             }
 
-            // Delete existing order items and their modifications
-            await tx.orderItemModification.deleteMany({
-                where: {
-                    orderItem: {
-                        orderId: orderId
-                    }
-                }
-            });
+            // Build desired state: menuItemId → total desired qty
+            const desiredByMenu = new Map();
+            for (const item of orderItems) {
+                desiredByMenu.set(item.menuItemId, (desiredByMenu.get(item.menuItemId) || 0) + item.quantity);
+            }
 
-            await tx.orderItem.deleteMany({
-                where: { orderId: orderId }
-            });
+            const itemsToDelete = [];         // old OrderItem ids to remove
+            const itemsToAdd = [];             // { menuItemId, quantity } - new rows to create
+            const itemsToUpdateQty = [];       // { id, newQty } - existing rows to adjust
+            let ingredientsToRefund = [];      // { menuItemId, qty } - for removed/reduced items
+            let ingredientsToDeduct = [];      // { menuItemId, qty } - for added/increased items
 
-            // Update order with new items and totals
-            const order = await tx.order.update({
-                where: { id: orderId },
-                data: {
-                    subtotal,
-                    tax,
-                    total,
-                    updatedAt: new Date(),
-                    items: {
-                        create: orderItems.map(item => ({
-                            menuItemId: item.menuItemId,
-                            quantity: item.quantity,
-                            price: parseFloat(menuItemPriceMap.get(item.menuItemId).price),
-                            notes: item.notes || null
-                        }))
+            // 1) Walk through existing items and compare with desired state
+            for (const [menuItemId, oldRows] of oldItemsByMenu) {
+                const desiredQty = desiredByMenu.get(menuItemId) || 0;
+                const existingTotalQty = oldRows.reduce((s, r) => s + r.quantity, 0);
+
+                if (desiredQty === 0) {
+                    // Item completely removed — delete all rows
+                    for (const row of oldRows) {
+                        itemsToDelete.push(row.id);
                     }
-                },
-                include: {
-                    table: true,
-                    items: {
-                        include: {
-                            menuItem: { include: { category: true } }
+                    if (ingredientsAlreadyDeducted) {
+                        ingredientsToRefund.push({ menuItemId, quantity: existingTotalQty });
+                    }
+                } else if (desiredQty === existingTotalQty) {
+                    // No change — keep all rows as-is (preserving prep status)
+                } else if (desiredQty < existingTotalQty) {
+                    // Quantity decreased — reduce from PENDING items first, then PREPARING, then DONE
+                    let toRemove = existingTotalQty - desiredQty;
+                    // Sort: PENDING first, then PREPARING, then DONE (remove least-cooked first)
+                    const sorted = [...oldRows].sort((a, b) => {
+                        const order = { PENDING: 0, PREPARING: 1, DONE: 2 };
+                        return (order[a.prepStatus] || 0) - (order[b.prepStatus] || 0);
+                    });
+                    for (const row of sorted) {
+                        if (toRemove <= 0) break;
+                        if (row.quantity <= toRemove) {
+                            // Remove this entire row
+                            itemsToDelete.push(row.id);
+                            toRemove -= row.quantity;
+                        } else {
+                            // Reduce this row's quantity
+                            itemsToUpdateQty.push({ id: row.id, newQty: row.quantity - toRemove });
+                            toRemove = 0;
                         }
                     }
+                    if (ingredientsAlreadyDeducted) {
+                        ingredientsToRefund.push({ menuItemId, quantity: existingTotalQty - desiredQty });
+                    }
+                } else {
+                    // Quantity increased — add a NEW row for the extra qty (goes to kitchen as PENDING)
+                    const extra = desiredQty - existingTotalQty;
+                    itemsToAdd.push({ menuItemId, quantity: extra });
+                    if (ingredientsAlreadyDeducted) {
+                        ingredientsToDeduct.push({ menuItemId, quantity: extra });
+                    }
                 }
-            });
 
-            // Add modifications to new order items
-            for (let i = 0; i < orderItems.length; i++) {
-                const item = orderItems[i];
-                const createdOrderItem = order.items[i];
+                // Mark as processed
+                desiredByMenu.delete(menuItemId);
+            }
 
-                if (item.modifications && item.modifications.length > 0) {
-                    for (const mod of item.modifications) {
+            // 2) Any remaining in desiredByMenu are brand-new items
+            for (const [menuItemId, qty] of desiredByMenu) {
+                itemsToAdd.push({ menuItemId, quantity: qty });
+                if (ingredientsAlreadyDeducted) {
+                    ingredientsToDeduct.push({ menuItemId, quantity: qty });
+                }
+            }
+
+            // ── Check ingredient availability for new/increased items ────
+            if (itemsToAdd.length > 0) {
+                const missingIngredients = await checkIngredientAvailability(tx, itemsToAdd, true);
+                if (missingIngredients.length > 0) {
+                    throw createInsufficientStockError(missingIngredients);
+                }
+            }
+
+            // ── Apply DB changes ─────────────────────────────────────────
+
+            // Delete removed items (and their modifications)
+            if (itemsToDelete.length > 0) {
+                await tx.orderItemModification.deleteMany({
+                    where: { orderItemId: { in: itemsToDelete } }
+                });
+                await tx.orderItem.deleteMany({
+                    where: { id: { in: itemsToDelete } }
+                });
+            }
+
+            // Update quantities on reduced items
+            for (const { id, newQty } of itemsToUpdateQty) {
+                await tx.orderItem.update({
+                    where: { id },
+                    data: { quantity: newQty }
+                });
+            }
+
+            // Create new item rows (prepStatus defaults to PENDING)
+            for (const item of itemsToAdd) {
+                const newItem = await tx.orderItem.create({
+                    data: {
+                        orderId,
+                        menuItemId: item.menuItemId,
+                        quantity: item.quantity,
+                        price: parseFloat(menuItemPriceMap.get(item.menuItemId).price),
+                        notes: orderItems.find(oi => oi.menuItemId === item.menuItemId)?.notes || null,
+                    }
+                });
+
+                // Add modifications for this new item
+                const sourceItem = orderItems.find(oi => oi.menuItemId === item.menuItemId);
+                if (sourceItem?.modifications?.length > 0) {
+                    for (const mod of sourceItem.modifications) {
                         await tx.orderItemModification.create({
                             data: {
-                                orderItemId: createdOrderItem.id,
+                                orderItemId: newItem.id,
                                 modificationId: mod.id,
                                 quantity: mod.quantity || 1,
                                 price: parseFloat(modPriceMap.get(mod.id).price)
@@ -477,7 +560,52 @@ exports.updateOrder = async (req, res, next) => {
                 }
             }
 
-            // Update table current bill (only for dine-in orders with a table)
+            // ── Ingredient adjustments ───────────────────────────────────
+            // Refund ingredients for removed/decreased items
+            for (const { menuItemId, quantity } of ingredientsToRefund) {
+                const recipe = await tx.menuItemIngredient.findMany({
+                    where: { menuItemId },
+                    include: { ingredient: true }
+                });
+                for (const recipeItem of recipe) {
+                    const refundQty = recipeItem.quantity * quantity;
+                    await tx.ingredient.update({
+                        where: { id: recipeItem.ingredientId },
+                        data: { currentStock: { increment: refundQty } }
+                    });
+                    await tx.ingredientStockLog.create({
+                        data: {
+                            ingredientId: recipeItem.ingredientId,
+                            changeType: 'ADJUSTMENT',
+                            quantity: refundQty,
+                            orderId,
+                            notes: `Refunded - Order #${orderId} edit (item removed/reduced)`
+                        }
+                    });
+                }
+            }
+
+            // Deduct ingredients for added/increased items
+            if (ingredientsToDeduct.length > 0) {
+                await deductIngredients(tx, ingredientsToDeduct, orderId);
+            }
+
+            // ── Update order totals and status ───────────────────────────
+            // Set status to PREPARING if new PENDING items were added to a PREPARING/SERVED order
+            const shouldResetStatus = ingredientsAlreadyDeducted && itemsToAdd.length > 0;
+
+            await tx.order.update({
+                where: { id: orderId },
+                data: {
+                    subtotal,
+                    tax,
+                    total,
+                    ...(shouldResetStatus ? { status: 'PREPARING' } : {}),
+                    updatedAt: new Date()
+                }
+            });
+
+            // Update table current bill
             if (existingOrder.tableId) {
                 await tx.table.update({
                     where: { id: existingOrder.tableId },
@@ -488,7 +616,7 @@ exports.updateOrder = async (req, res, next) => {
                 });
             }
 
-            // Fetch complete updated order with modifications
+            // Fetch complete updated order
             const completeOrder = await tx.order.findUnique({
                 where: { id: orderId },
                 include: {
@@ -931,8 +1059,9 @@ exports.createPayLaterOrder = async (req, res, next) => {
             };
             if (customer) orderUpdateData.customerId = customer.id;
 
-            // Create or update DeliveryInfo with customer details (both fields required by schema)
-            if (customerName && customerPhone) {
+            // Create or update DeliveryInfo with customer details
+            // Only for non-dine-in orders to maintain tableId/deliveryInfo mutual exclusivity
+            if (customerName && customerPhone && !order.tableId) {
                 await tx.deliveryInfo.upsert({
                     where: { orderId: order.id },
                     create: {

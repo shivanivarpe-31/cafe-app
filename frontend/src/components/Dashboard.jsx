@@ -28,6 +28,7 @@ import axios from "axios";
 import Navbar from "../components/navbar";
 import TableMergeModal from "../components/TableMergeModal";
 import KeyboardShortcutsHelp from "../components/KeyboardShortcutsHelp";
+import ItemChecklistModal from "../components/ItemChecklistModal";
 import { useSmartPolling } from "../hooks/useSmartPolling";
 import {
   useKeyboardShortcuts,
@@ -95,6 +96,7 @@ const Dashboard = () => {
   // Loading states for async actions
   const [clearingTable, setClearingTable] = useState(null);
   const [updatingDeliveryStatus, setUpdatingDeliveryStatus] = useState(null);
+  const [checklistOrder, setChecklistOrder] = useState(null); // Order pending checklist review
 
   // Use ref to track previous order IDs (doesn't cause re-renders)
   const previousOrderIdsRef = useRef(new Set());
@@ -415,14 +417,43 @@ const Dashboard = () => {
   };
 
   // Quick update delivery status
-  const updateDeliveryStatus = async (orderId, newStatus, e) => {
-    e.stopPropagation();
+  const updateDeliveryStatus = async (
+    orderId,
+    newStatus,
+    e,
+    itemCheckList = null,
+  ) => {
+    if (e) e.stopPropagation();
+
+    // Intercept READY_FOR_PICKUP for Zomato orders with checklist tags
+    if (newStatus === "READY_FOR_PICKUP" && !checklistOrder) {
+      const order = deliveryOrders.find((o) => o.id === orderId);
+      if (
+        order?.deliveryInfo?.deliveryPlatform === "ZOMATO" &&
+        order?.deliveryInfo?.orderTags
+      ) {
+        try {
+          const tags = JSON.parse(order.deliveryInfo.orderTags);
+          const hasChecklist = tags.some(
+            (t) =>
+              t.tag_type === "MANDATORY_ITEM_CHECKLIST" ||
+              t.tag_type === "SKIPPABLE_ITEM_CHECKLIST",
+          );
+          if (hasChecklist) {
+            setChecklistOrder(order);
+            return;
+          }
+        } catch {
+          /* no valid tags, proceed normally */
+        }
+      }
+    }
 
     setUpdatingDeliveryStatus(orderId);
     try {
-      await axios.put(`/api/delivery/${orderId}/status`, {
-        deliveryStatus: newStatus,
-      });
+      const body = { deliveryStatus: newStatus };
+      if (itemCheckList !== null) body.itemCheckList = itemCheckList;
+      await axios.put(`/api/delivery/${orderId}/status`, body);
       showSuccess(`Order status updated to ${newStatus.replace(/_/g, " ")}`);
       fetchDashboardData();
     } catch (err) {
@@ -1195,6 +1226,24 @@ const Dashboard = () => {
               isOpen={showShortcutsHelp}
               onClose={() => setShowShortcutsHelp(false)}
             />
+
+            {/* Zomato Item Checklist Modal */}
+            {checklistOrder && (
+              <ItemChecklistModal
+                order={checklistOrder}
+                onConfirm={async (itemCheckList) => {
+                  const orderId = checklistOrder.id;
+                  setChecklistOrder(null);
+                  await updateDeliveryStatus(
+                    orderId,
+                    "READY_FOR_PICKUP",
+                    null,
+                    itemCheckList,
+                  );
+                }}
+                onCancel={() => setChecklistOrder(null)}
+              />
+            )}
           </div>
         </div>
       </div>

@@ -22,6 +22,9 @@ import {
   Package,
   Truck,
   UtensilsCrossed,
+  Bell,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import Navbar from "../components/navbar";
 import PaymentModal from "../components/PaymentModal";
@@ -57,7 +60,58 @@ const OrdersPage = () => {
   const [showEditOrderModal, setShowEditOrderModal] = useState(false);
   const [selectedOrderForEdit, setSelectedOrderForEdit] = useState(null);
 
+  // Ready-to-serve notification states
+  const [readyOrders, setReadyOrders] = useState([]); // orders where chef finished all items
+  const [soundEnabled, setSoundEnabled] = useState(true);
+  const previousReadyIdsRef = useRef(new Set());
+  const isFirstLoadRef = useRef(true);
+  const audioContextRef = useRef(null);
+
   const abortControllerRef = useRef(null);
+
+  // Play notification sound for ready orders
+  const playReadySound = useCallback(() => {
+    if (!soundEnabled) return;
+    try {
+      if (
+        !audioContextRef.current ||
+        audioContextRef.current.state === "closed"
+      ) {
+        audioContextRef.current = new (window.AudioContext ||
+          window.webkitAudioContext)();
+      }
+      const ctx = audioContextRef.current;
+      if (ctx.state === "suspended") ctx.resume();
+
+      // Two-tone ding-dong
+      const playTone = (freq, startTime) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.frequency.value = freq;
+        osc.type = "sine";
+        gain.gain.setValueAtTime(0.5, startTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, startTime + 0.4);
+        osc.start(startTime);
+        osc.stop(startTime + 0.4);
+      };
+      playTone(880, ctx.currentTime);
+      playTone(1100, ctx.currentTime + 0.25);
+    } catch (e) {
+      console.log("Audio playback failed:", e);
+    }
+  }, [soundEnabled]);
+
+  // Dismiss a single ready notification
+  const dismissReadyOrder = useCallback((orderId) => {
+    setReadyOrders((prev) => prev.filter((o) => o.id !== orderId));
+  }, []);
+
+  // Dismiss all ready notifications
+  const dismissAllReady = useCallback(() => {
+    setReadyOrders([]);
+  }, []);
 
   // Define fetchOrders with useCallback before using it in useSmartPolling
   const fetchOrders = useCallback(async () => {
@@ -72,20 +126,59 @@ const OrdersPage = () => {
         signal: abortControllerRef.current.signal,
       });
       setOrders(res.data.data || res.data);
+
+      // Detect PREPARING orders where chef has finished ALL items (prepStatus === 'DONE')
+      // This means kitchen is done, manager needs to mark served
+      const fetched = res.data.data || res.data;
+      const kitchenReadyIds = new Set(
+        fetched
+          .filter(
+            (o) =>
+              o.status === "PREPARING" &&
+              o.items?.length > 0 &&
+              o.items.every((item) => item.prepStatus === "DONE"),
+          )
+          .map((o) => o.id),
+      );
+
+      const newlyReady = fetched.filter(
+        (o) =>
+          kitchenReadyIds.has(o.id) && !previousReadyIdsRef.current.has(o.id),
+      );
+      if (newlyReady.length > 0) {
+        setReadyOrders((prev) => {
+          const existingIds = new Set(prev.map((p) => p.id));
+          const unique = newlyReady.filter((o) => !existingIds.has(o.id));
+          return [...prev, ...unique];
+        });
+        playReadySound();
+
+        // Auto-dismiss after 5 seconds
+        const newIds = newlyReady.map((o) => o.id);
+        setTimeout(() => {
+          setReadyOrders((prev) => prev.filter((o) => !newIds.includes(o.id)));
+        }, 5000);
+      }
+
+      // Remove alerts for orders that are no longer in PREPARING state (already served/paid)
+      setReadyOrders((prev) => prev.filter((o) => kitchenReadyIds.has(o.id)));
+
+      isFirstLoadRef.current = false;
+      previousReadyIdsRef.current = kitchenReadyIds;
     } catch (err) {
       if (err.name === "CanceledError" || err.name === "AbortError") return;
       console.error("Failed to fetch orders:", err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [playReadySound]);
 
-  // Smart polling for orders (only when page is visible and user is active)
+  // Smart polling for orders — 10s when active for timely served notifications
   useSmartPolling(
     fetchOrders,
-    30000, // Poll every 30 seconds when user is active
-    120000, // Poll every 2 minutes when user is inactive
-    300000, // Consider user inactive after 5 minutes of no activity
+    10000, // Poll every 10 seconds when user is active
+    30000, // Poll every 30 seconds when user is inactive
+    120000, // Consider user inactive after 2 minutes of no activity
   );
 
   // Cleanup: abort in-flight request on unmount
@@ -150,6 +243,7 @@ const OrdersPage = () => {
 
   const handlePaymentSuccess = (paidOrder) => {
     setPaymentId(paidOrder.paymentId);
+    setSelectedOrderForPayment(paidOrder);
     setShowPaymentModal(false);
     setShowSuccessModal(true);
     fetchOrders();
@@ -425,22 +519,105 @@ const OrdersPage = () => {
                 Manage and track all orders
               </p>
             </div>
-            <button
-              onClick={fetchOrders}
-              disabled={loading}
-              className="flex items-center space-x-2 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-medium transition-colors"
-              title="Refresh orders"
-            >
-              <RefreshCw
-                className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
-              />
-              <span>Refresh</span>
-            </button>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setSoundEnabled((v) => !v)}
+                className={`flex items-center space-x-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors ${
+                  soundEnabled
+                    ? "bg-green-50 text-green-700 hover:bg-green-100"
+                    : "bg-gray-100 text-gray-400 hover:bg-gray-200"
+                }`}
+                title={
+                  soundEnabled ? "Mute notifications" : "Enable notifications"
+                }
+              >
+                {soundEnabled ? (
+                  <Volume2 className="w-4 h-4" />
+                ) : (
+                  <VolumeX className="w-4 h-4" />
+                )}
+              </button>
+              <button
+                onClick={fetchOrders}
+                disabled={loading}
+                className="flex items-center space-x-2 px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-xl text-sm font-medium transition-colors"
+                title="Refresh orders"
+              >
+                <RefreshCw
+                  className={`w-4 h-4 ${loading ? "animate-spin" : ""}`}
+                />
+                <span>Refresh</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
 
       <div className="max-w-7xl mx-auto px-6 py-6">
+        {/* Kitchen Ready Notifications — auto-dismiss in 5s */}
+        {readyOrders.length > 0 && (
+          <div className="mb-6 space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Bell className="w-5 h-5 text-green-600 animate-bounce" />
+                <span className="text-sm font-bold text-green-700 uppercase tracking-wider">
+                  Kitchen Ready ({readyOrders.length})
+                </span>
+              </div>
+              {readyOrders.length > 1 && (
+                <button
+                  onClick={dismissAllReady}
+                  className="text-xs text-gray-500 hover:text-gray-700 font-medium"
+                >
+                  Dismiss All
+                </button>
+              )}
+            </div>
+            {readyOrders.map((order) => (
+              <div
+                key={order.id}
+                className="flex items-center justify-between bg-green-50 border-2 border-green-300 rounded-xl px-4 py-3 shadow-sm animate-pulse"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="bg-green-500 text-white p-2 rounded-lg">
+                    <ChefHat className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <span className="font-bold text-green-800">
+                      Order #{order.billNumber}
+                    </span>
+                    <span className="text-green-600 text-sm ml-2">
+                      {order.orderType === "DINE_IN"
+                        ? `Table ${order.table?.number || "?"}`
+                        : order.orderType}
+                    </span>
+                    <span className="text-green-600 text-sm ml-2">
+                      — All items prepared
+                    </span>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => {
+                      updateOrderStatus(order.id, "SERVED");
+                      dismissReadyOrder(order.id);
+                    }}
+                    className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-xs font-bold rounded-lg transition-colors"
+                  >
+                    Mark Served
+                  </button>
+                  <button
+                    onClick={() => dismissReadyOrder(order.id)}
+                    className="p-1 text-green-400 hover:text-green-600"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
         {/* Filters */}
         <div className="bg-white rounded-2xl shadow-sm border border-gray-200 p-4 mb-6">
           <div className="flex flex-col lg:flex-row gap-4">

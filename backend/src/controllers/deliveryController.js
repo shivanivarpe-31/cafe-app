@@ -526,13 +526,13 @@ exports.getDeliveryOrders = async (req, res, next) => {
 exports.updateDeliveryStatus = async (req, res, next) => {
     try {
         const { id } = req.params;
-        const { deliveryStatus, deliveryPartnerName, deliveryPartnerPhone, actualTime } = req.body;
+        const { deliveryStatus, deliveryPartnerName, deliveryPartnerPhone, actualTime, itemCheckList } = req.body;
 
         if (!id || isNaN(parseInt(id, 10))) {
             return res.status(400).json({ error: 'Valid order ID is required' });
         }
 
-        const validStatuses = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'];
+        const validStatuses = ['PENDING', 'CONFIRMED', 'PREPARING', 'READY_FOR_PICKUP', 'RIDER_ASSIGNED', 'OUT_FOR_DELIVERY', 'DELIVERED', 'CANCELLED'];
         const normalizedStatus = deliveryStatus?.toUpperCase();
         if (!normalizedStatus || !validStatuses.includes(normalizedStatus)) {
             return res.status(400).json({
@@ -563,6 +563,9 @@ exports.updateDeliveryStatus = async (req, res, next) => {
             case 'READY_FOR_PICKUP':
                 orderStatus = 'SERVED';
                 break;
+            case 'RIDER_ASSIGNED':
+                // Rider assigned doesn't change the order status — food is still being prepared or ready
+                break;
             case 'OUT_FOR_DELIVERY':
             case 'DELIVERED':
                 orderStatus = 'PAID';
@@ -580,6 +583,43 @@ exports.updateDeliveryStatus = async (req, res, next) => {
                     paidAt: orderStatus === 'PAID' ? new Date() : undefined
                 }
             });
+        }
+
+        // Notify platform (Zomato/Swiggy) of the status change
+        if (deliveryInfo.deliveryPlatform === 'ZOMATO' && deliveryInfo.platformOrderId) {
+            try {
+                const { notifyZomatoStatusChange } = require('../integrations/zomato/zomatoApiClient');
+                await notifyZomatoStatusChange(
+                    deliveryInfo.platformOrderId,
+                    normalizedStatus,
+                    {
+                        prepTime: deliveryInfo.preparationTime,
+                        rejectionReason: req.body.rejectionReason,
+                        deliveryPartnerName: deliveryPartnerName,
+                        deliveryPartnerPhone: deliveryPartnerPhone,
+                        itemCheckList: itemCheckList ?? null
+                    }
+                );
+            } catch (notifyErr) {
+                // Log but don't fail the local update
+                console.warn('Failed to notify Zomato:', notifyErr.message);
+            }
+        }
+
+        if (deliveryInfo.deliveryPlatform === 'SWIGGY' && deliveryInfo.platformOrderId) {
+            try {
+                const { notifySwiggyStatusChange } = require('../integrations/swiggy/swiggyApiClient');
+                await notifySwiggyStatusChange(
+                    deliveryInfo.platformOrderId,
+                    normalizedStatus,
+                    {
+                        prepTime: deliveryInfo.preparationTime,
+                        rejectionReason: req.body.rejectionReason
+                    }
+                );
+            } catch (notifyErr) {
+                console.warn('Failed to notify Swiggy:', notifyErr.message);
+            }
         }
 
         res.json({ success: true, deliveryInfo });
@@ -619,6 +659,7 @@ exports.getDeliveryStats = async (req, res, next) => {
                 pending: todayOrders.filter(o => o.deliveryInfo?.deliveryStatus === 'PENDING').length,
                 preparing: todayOrders.filter(o => o.deliveryInfo?.deliveryStatus === 'PREPARING').length,
                 ready: todayOrders.filter(o => o.deliveryInfo?.deliveryStatus === 'READY_FOR_PICKUP').length,
+                riderAssigned: todayOrders.filter(o => o.deliveryInfo?.deliveryStatus === 'RIDER_ASSIGNED').length,
                 outForDelivery: todayOrders.filter(o => o.deliveryInfo?.deliveryStatus === 'OUT_FOR_DELIVERY').length,
                 delivered: todayOrders.filter(o => o.deliveryInfo?.deliveryStatus === 'DELIVERED').length,
                 cancelled: todayOrders.filter(o => o.deliveryInfo?.deliveryStatus === 'CANCELLED').length

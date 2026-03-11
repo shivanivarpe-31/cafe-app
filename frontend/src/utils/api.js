@@ -120,8 +120,8 @@ export const integrationAPI = {
         return apiCall('/integration/stats');
     },
 
-    // Sync menu preview
-    syncPreview: async (platform) => {
+    // Sync menu to platform
+    syncMenu: async (platform) => {
         return apiCall(`/integration/sync/${platform}`, {
             method: 'POST'
         });

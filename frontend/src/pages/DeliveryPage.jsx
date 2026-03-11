@@ -20,6 +20,7 @@ import {
   CheckCircle,
 } from "lucide-react";
 import Navbar from "../components/navbar";
+import ItemChecklistModal from "../components/ItemChecklistModal";
 import { showSuccess, showError, showWarning } from "../utils/toast";
 
 const DeliveryPage = () => {
@@ -56,6 +57,7 @@ const DeliveryPage = () => {
 
   // Stats
   const [stats, setStats] = useState(null);
+  const [checklistOrder, setChecklistOrder] = useState(null);
 
   const abortControllerRef = useRef(null);
 
@@ -211,11 +213,35 @@ const DeliveryPage = () => {
   };
 
   // Update delivery status
-  const updateStatus = async (orderId, newStatus) => {
+  const updateStatus = async (orderId, newStatus, itemCheckList = null) => {
+    // Intercept READY_FOR_PICKUP for Zomato orders with checklist tags
+    if (newStatus === "READY_FOR_PICKUP" && !checklistOrder) {
+      const order = orders.find((o) => o.id === orderId);
+      if (
+        order?.deliveryInfo?.deliveryPlatform === "ZOMATO" &&
+        order?.deliveryInfo?.orderTags
+      ) {
+        try {
+          const tags = JSON.parse(order.deliveryInfo.orderTags);
+          const hasChecklist = tags.some(
+            (t) =>
+              t.tag_type === "MANDATORY_ITEM_CHECKLIST" ||
+              t.tag_type === "SKIPPABLE_ITEM_CHECKLIST",
+          );
+          if (hasChecklist) {
+            setChecklistOrder(order);
+            return;
+          }
+        } catch {
+          /* no valid tags, proceed normally */
+        }
+      }
+    }
+
     try {
-      await axios.put(`/api/delivery/${orderId}/status`, {
-        deliveryStatus: newStatus,
-      });
+      const body = { deliveryStatus: newStatus };
+      if (itemCheckList !== null) body.itemCheckList = itemCheckList;
+      await axios.put(`/api/delivery/${orderId}/status`, body);
       fetchOrders();
       fetchStats();
     } catch (err) {
@@ -886,6 +912,19 @@ const DeliveryPage = () => {
           </div>
         )}
       </div>
+
+      {/* Zomato Item Checklist Modal */}
+      {checklistOrder && (
+        <ItemChecklistModal
+          order={checklistOrder}
+          onConfirm={async (itemCheckList) => {
+            const orderId = checklistOrder.id;
+            setChecklistOrder(null);
+            await updateStatus(orderId, "READY_FOR_PICKUP", itemCheckList);
+          }}
+          onCancel={() => setChecklistOrder(null)}
+        />
+      )}
     </div>
   );
 };

@@ -6,6 +6,9 @@
 import React, { useState } from "react";
 import IntegrationDashboard from "../components/IntegrationDashboard";
 import ItemMappingManager from "../components/ItemMappingManager";
+import PlatformConfigManager from "../components/PlatformConfigManager";
+import MenuSyncManager from "../components/MenuSyncManager";
+import OutletManager from "../components/OutletManager";
 import "./IntegrationSettings.css";
 import Navbar from "../components/navbar";
 
@@ -28,11 +31,32 @@ const IntegrationSettings = () => {
             Dashboard
           </button>
           <button
+            className={`tab-button ${activeTab === "config" ? "active" : ""}`}
+            onClick={() => setActiveTab("config")}
+          >
+            <span className="tab-icon">🔧</span>
+            Configuration
+          </button>
+          <button
             className={`tab-button ${activeTab === "mappings" ? "active" : ""}`}
             onClick={() => setActiveTab("mappings")}
           >
             <span className="tab-icon">🗺️</span>
             Item Mappings
+          </button>
+          <button
+            className={`tab-button ${activeTab === "menusync" ? "active" : ""}`}
+            onClick={() => setActiveTab("menusync")}
+          >
+            <span className="tab-icon">🔄</span>
+            Menu Sync
+          </button>
+          <button
+            className={`tab-button ${activeTab === "outlet" ? "active" : ""}`}
+            onClick={() => setActiveTab("outlet")}
+          >
+            <span className="tab-icon">🏠</span>
+            Outlet
           </button>
           <button
             className={`tab-button ${activeTab === "webhooks" ? "active" : ""}`}
@@ -59,10 +83,31 @@ const IntegrationSettings = () => {
             </div>
           )}
 
+          {/* Configuration Tab */}
+          {activeTab === "config" && (
+            <div className="tab-pane active">
+              <PlatformConfigManager />
+            </div>
+          )}
+
           {/* Mappings Tab */}
           {activeTab === "mappings" && (
             <div className="tab-pane active">
               <ItemMappingManager />
+            </div>
+          )}
+
+          {/* Menu Sync Tab */}
+          {activeTab === "menusync" && (
+            <div className="tab-pane active">
+              <MenuSyncManager />
+            </div>
+          )}
+
+          {/* Outlet Management Tab */}
+          {activeTab === "outlet" && (
+            <div className="tab-pane active">
+              <OutletManager />
             </div>
           )}
 

@@ -1,0 +1,391 @@
+/* Platform Config Manager Styles */
+
+.platform-config-manager {
+  padding: 20px;
+}
+
+.config-header {
+  margin-bottom: 24px;
+}
+
+.config-header h2 {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0 0 8px 0;
+}
+
+.config-header p {
+  color: #6b7280;
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+.platform-configs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(480px, 1fr));
+  gap: 24px;
+}
+
+/* Card */
+.platform-config-card {
+  background: #fff;
+  border-radius: 12px;
+  border: 1px solid #e5e7eb;
+  border-top: 4px solid #6b7280;
+  padding: 24px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.config-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid #f3f4f6;
+}
+
+.platform-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.platform-icon {
+  font-size: 2rem;
+}
+
+.platform-info h3 {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #1f2937;
+  margin: 0;
+}
+
+.platform-info p {
+  font-size: 0.85rem;
+  color: #6b7280;
+  margin: 2px 0 0 0;
+}
+
+/* Toggle Switch */
+.enable-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.enable-toggle input {
+  display: none;
+}
+
+.toggle-slider {
+  width: 44px;
+  height: 24px;
+  background: #d1d5db;
+  border-radius: 12px;
+  position: relative;
+  transition: background 0.2s;
+}
+
+.toggle-slider::after {
+  content: "";
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  background: #fff;
+  border-radius: 50%;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+}
+
+.enable-toggle input:checked + .toggle-slider {
+  background: #16a34a;
+}
+
+.enable-toggle input:checked + .toggle-slider::after {
+  transform: translateX(20px);
+}
+
+.toggle-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.enable-toggle input:checked ~ .toggle-label {
+  color: #16a34a;
+}
+
+/* Sections */
+.config-section {
+  margin-bottom: 20px;
+}
+
+.config-section h4 {
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: #374151;
+  margin: 0 0 12px 0;
+}
+
+/* Fields */
+.config-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.config-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  position: relative;
+}
+
+.config-field.inline {
+  flex-direction: row;
+  align-items: center;
+  gap: 12px;
+}
+
+.config-field.inline input {
+  width: 80px;
+}
+
+.config-field label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #4b5563;
+}
+
+.config-field input {
+  padding: 8px 12px;
+  border: 1px solid #d1d5db;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  color: #1f2937;
+  transition: border-color 0.15s;
+}
+
+.config-field input:focus {
+  outline: none;
+  border-color: #3b82f6;
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.1);
+}
+
+.config-field input::placeholder {
+  color: #9ca3af;
+  font-size: 0.85rem;
+}
+
+.field-status {
+  font-size: 0.75rem;
+  font-weight: 600;
+  position: absolute;
+  right: 12px;
+  top: 34px;
+}
+
+.field-status.saved {
+  color: #16a34a;
+}
+
+/* Settings */
+.config-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.setting-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: #374151;
+  cursor: pointer;
+}
+
+.setting-checkbox input {
+  width: 16px;
+  height: 16px;
+  accent-color: #3b82f6;
+}
+
+/* Action Buttons */
+.config-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #f3f4f6;
+}
+
+.btn-save,
+.btn-test {
+  padding: 10px 20px;
+  border: none;
+  border-radius: 8px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.btn-save {
+  background: #3b82f6;
+  color: #fff;
+  flex: 1;
+}
+
+.btn-save:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.btn-test {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  flex: 1;
+}
+
+.btn-test:hover:not(:disabled) {
+  background: #e5e7eb;
+}
+
+.btn-save:disabled,
+.btn-test:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Messages */
+.config-message {
+  margin-top: 12px;
+  padding: 10px 14px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+
+.config-message.success {
+  background: #f0fdf4;
+  color: #16a34a;
+  border: 1px solid #bbf7d0;
+}
+
+.config-message.error {
+  background: #fef2f2;
+  color: #dc2626;
+  border: 1px solid #fecaca;
+}
+
+/* Test Results */
+.test-results {
+  margin-top: 16px;
+  border-radius: 10px;
+  padding: 16px;
+  border: 1px solid #e5e7eb;
+}
+
+.test-results.pass {
+  background: #f0fdf4;
+  border-color: #bbf7d0;
+}
+
+.test-results.warning {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.test-results.fail {
+  background: #fef2f2;
+  border-color: #fecaca;
+}
+
+.test-results-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.test-overall-icon {
+  font-size: 1.2rem;
+}
+
+.test-overall-text {
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.test-checks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.test-check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.check-icon {
+  font-size: 0.9rem;
+  margin-top: 1px;
+}
+
+.check-details {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.check-name {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #1f2937;
+}
+
+.check-message {
+  font-size: 0.8rem;
+  color: #6b7280;
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+  .platform-configs {
+    grid-template-columns: 1fr;
+  }
+
+  .config-card-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .config-actions {
+    flex-direction: column;
+  }
+
+  .config-field.inline {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .config-field.inline input {
+    width: 100%;
+  }
+}

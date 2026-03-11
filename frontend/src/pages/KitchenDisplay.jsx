@@ -176,10 +176,37 @@ const KitchenDisplay = () => {
     return elapsed >= 900; // 15 minutes
   };
 
-  // Group orders by status
+  // Group orders by status, splitting mixed orders across columns by item prep status
   const pendingOrders = orders.filter((o) => o.status === "PENDING");
-  const preparingOrders = orders.filter((o) => o.status === "PREPARING");
-  const servedOrders = orders.filter((o) => o.status === "SERVED");
+
+  // PREPARING column: orders with items still being cooked (PENDING/PREPARING prep status)
+  // For a mixed order (some DONE, some PENDING), only the cooking items appear here
+  const preparingViews = [];
+  for (const o of orders) {
+    if (o.status === "PREPARING") {
+      const cookingItems = o.items.filter((i) => i.prepStatus !== "DONE");
+      if (cookingItems.length > 0) {
+        preparingViews.push({
+          ...o,
+          displayItems: cookingItems,
+          isSplitView: o.items.some((i) => i.prepStatus === "DONE"),
+        });
+      }
+    }
+  }
+
+  // SERVED column: fully served orders + the done portion of mixed preparing orders
+  const servedViews = [];
+  for (const o of orders) {
+    if (o.status === "SERVED") {
+      servedViews.push({ ...o, displayItems: o.items, isSplitView: false });
+    } else if (o.status === "PREPARING") {
+      const doneItems = o.items.filter((i) => i.prepStatus === "DONE");
+      if (doneItems.length > 0) {
+        servedViews.push({ ...o, displayItems: doneItems, isSplitView: true });
+      }
+    }
+  }
 
   if (loading) {
     return (
@@ -391,15 +418,15 @@ const KitchenDisplay = () => {
                   </h2>
                 </div>
                 <div className="bg-white text-orange-600 font-bold text-2xl md:text-3xl rounded-xl px-4 py-2 shadow-lg">
-                  {preparingOrders.length}
+                  {preparingViews.length}
                 </div>
               </div>
             </div>
 
             <div className="space-y-4">
-              {preparingOrders.map((order) => (
+              {preparingViews.map((order) => (
                 <OrderCard
-                  key={order.id}
+                  key={`prep-${order.id}`}
                   order={order}
                   statusColor="orange"
                   isUrgent={isOrderUrgent(order.createdAt)}
@@ -413,7 +440,7 @@ const KitchenDisplay = () => {
                   currentTime={currentTime}
                 />
               ))}
-              {preparingOrders.length === 0 && (
+              {preparingViews.length === 0 && (
                 <div className="bg-white rounded-2xl p-12 text-center border-2 border-gray-200 shadow-sm">
                   <Flame className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                   <p className="text-gray-500 text-lg font-medium">
@@ -437,15 +464,15 @@ const KitchenDisplay = () => {
                   </h2>
                 </div>
                 <div className="bg-white text-green-600 font-bold text-2xl md:text-3xl rounded-xl px-4 py-2 shadow-lg">
-                  {servedOrders.length}
+                  {servedViews.length}
                 </div>
               </div>
             </div>
 
             <div className="space-y-4">
-              {servedOrders.map((order) => (
+              {servedViews.map((order) => (
                 <OrderCard
-                  key={order.id}
+                  key={`served-${order.id}`}
                   order={order}
                   statusColor="green"
                   isUrgent={isOrderUrgent(order.createdAt)}
@@ -459,7 +486,7 @@ const KitchenDisplay = () => {
                   currentTime={currentTime}
                 />
               ))}
-              {servedOrders.length === 0 && (
+              {servedViews.length === 0 && (
                 <div className="bg-white rounded-2xl p-12 text-center border-2 border-gray-200 shadow-sm">
                   <Utensils className="w-16 h-16 text-gray-400 mx-auto mb-4" />
                   <p className="text-gray-500 text-lg font-medium">
@@ -477,7 +504,14 @@ const KitchenDisplay = () => {
 };
 
 // ── Per-Item Prep Row ──────────────────────────────────────────────────────
-const ItemPrepRow = ({ item, onStart, onComplete, loading, currentTime }) => {
+const ItemPrepRow = ({
+  item,
+  onStart,
+  onComplete,
+  loading,
+  currentTime,
+  isNewItem,
+}) => {
   const isLoading = loading[item.id];
 
   // Live elapsed seconds since prep started (computed client-side for real-time ticking)
@@ -525,6 +559,11 @@ const ItemPrepRow = ({ item, onStart, onComplete, loading, currentTime }) => {
             {item.quantity}x
           </span>
           {item.menuItem.name}
+          {isNewItem && (
+            <span className="inline-block bg-amber-400 text-white rounded-md px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wider animate-pulse">
+              NEW
+            </span>
+          )}
         </span>
         <span className="text-gray-400 text-xs bg-gray-200 px-2 py-0.5 rounded-lg">
           {item.menuItem.category.name}
@@ -713,9 +752,21 @@ const OrderCard = ({
         )}
       </div>
 
-      {/* Order Items — with per-item prep controls */}
+      {/* Modified order indicator — shows when this is a split view (other items in another column) */}
+      {order.isSplitView && (
+        <div className="flex items-center gap-2 mb-3 px-3 py-2 bg-amber-50 border border-amber-300 rounded-xl">
+          <Bell className="w-4 h-4 text-amber-600" />
+          <span className="text-xs font-bold text-amber-700 uppercase tracking-wider">
+            {statusColor === "orange"
+              ? "Modified Order — New items to cook"
+              : "Modified Order — New items cooking"}
+          </span>
+        </div>
+      )}
+
+      {/* Order Items — use displayItems (filtered) if available, otherwise all items */}
       <div className="space-y-3 mb-4">
-        {order.items.map((item) => (
+        {(order.displayItems || order.items).map((item) => (
           <ItemPrepRow
             key={item.id}
             item={item}
@@ -723,24 +774,52 @@ const OrderCard = ({
             onComplete={onCompleteItemPrep}
             loading={itemActionLoading}
             currentTime={currentTime}
+            isNewItem={
+              statusColor === "orange" &&
+              item.prepStatus === "PENDING" &&
+              order.isSplitView
+            }
           />
         ))}
       </div>
 
       {/* Action Button */}
       {nextStatus ? (
-        <button
-          onClick={() => onStatusChange(order.id, nextStatus)}
-          className={`w-full py-4 rounded-xl font-bold text-lg transition-all transform hover:scale-105 active:scale-95 shadow-lg ${
-            statusColor === "red"
-              ? "bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white"
-              : statusColor === "orange"
-              ? "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
-              : "bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
-          }`}
-        >
-          {nextStatusLabel}
-        </button>
+        (() => {
+          // For PREPARING→SERVED, only allow when ALL items on the full order are DONE
+          const allItemsDone = order.items.every(
+            (i) => i.prepStatus === "DONE",
+          );
+          const isServeAction = nextStatus === "SERVED";
+          const disabled = isServeAction && !allItemsDone;
+          const pendingCount = order.items.filter(
+            (i) => i.prepStatus !== "DONE",
+          ).length;
+
+          return (
+            <button
+              onClick={() => onStatusChange(order.id, nextStatus)}
+              disabled={disabled}
+              className={`w-full py-4 rounded-xl font-bold text-lg transition-all transform shadow-lg ${
+                disabled
+                  ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                  : `hover:scale-105 active:scale-95 ${
+                      statusColor === "red"
+                        ? "bg-gradient-to-r from-orange-500 to-orange-600 hover:from-orange-600 hover:to-orange-700 text-white"
+                        : statusColor === "orange"
+                        ? "bg-gradient-to-r from-green-500 to-green-600 hover:from-green-600 hover:to-green-700 text-white"
+                        : "bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white"
+                    }`
+              }`}
+            >
+              {disabled
+                ? `${pendingCount} item${
+                    pendingCount > 1 ? "s" : ""
+                  } still cooking`
+                : nextStatusLabel}
+            </button>
+          );
+        })()
       ) : (
         <div className="w-full py-4 text-center rounded-xl bg-green-50 border-2 border-green-200">
           <div className="flex items-center justify-center space-x-2">

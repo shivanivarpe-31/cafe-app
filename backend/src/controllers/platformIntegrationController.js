@@ -375,8 +375,9 @@ exports.exportMappings = async (req, res, next) => {
 };
 
 /**
- * Sync menu items with platform
- * This would call actual Swiggy/Zomato APIs
+ * Sync menu items with platform.
+ * For Zomato: builds payload, validates, pushes full snapshot.
+ * WARNING: Restaurant is toggled OFF during processing until Zomato confirms success.
  */
 exports.syncMenuWithPlatform = async (req, res, next) => {
     try {
@@ -390,7 +391,19 @@ exports.syncMenuWithPlatform = async (req, res, next) => {
             });
         }
 
-        // Get active menu items
+        if (platformUpper === 'ZOMATO') {
+            const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+            const result = await zomatoApi.syncMenuToZomato();
+
+            return res.json({
+                success: true,
+                message: 'Menu pushed to Zomato. Restaurant will be temporarily toggled off until processing completes. Watch for the processing callback.',
+                platform: platformUpper,
+                result
+            });
+        }
+
+        // Swiggy: preview only (no API client yet)
         const menuItems = await prisma.menuItem.findMany({
             where: { isActive: true },
             include: {
@@ -401,8 +414,6 @@ exports.syncMenuWithPlatform = async (req, res, next) => {
             }
         });
 
-        // This would call actual platform API
-        // For now, just return what would be synced
         const itemsToSync = menuItems.map(item => ({
             menuItemId: item.id,
             name: item.name,
@@ -414,12 +425,163 @@ exports.syncMenuWithPlatform = async (req, res, next) => {
 
         res.json({
             success: true,
-            message: 'Menu sync preview (not actually synced)',
+            message: `Menu sync preview for ${platformUpper} (API client not yet implemented)`,
             platform: platformUpper,
             itemsToSync: itemsToSync.filter(i => !i.mapped),
             alreadyMapped: itemsToSync.filter(i => i.mapped),
             totalItems: itemsToSync.length,
             unmappedCount: itemsToSync.filter(i => !i.mapped).length
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Fetch the current menu from a platform
+ */
+exports.fetchMenuFromPlatform = async (req, res, next) => {
+    try {
+        const { platform } = req.params;
+        const platformUpper = platform.toUpperCase();
+
+        if (platformUpper === 'ZOMATO') {
+            const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+            const menu = await zomatoApi.getMenu();
+            return res.json({ success: true, platform: platformUpper, menu });
+        }
+
+        res.status(400).json({
+            success: false,
+            error: `Fetch menu not supported for ${platformUpper}`
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Preview what would be sent to a platform (dry run)
+ * Includes validation errors so the user can fix issues before pushing.
+ */
+exports.previewMenuSync = async (req, res, next) => {
+    try {
+        const { platform } = req.params;
+        const platformUpper = platform.toUpperCase();
+
+        if (platformUpper === 'ZOMATO') {
+            const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+            let payload, validationErrors;
+            try {
+                payload = await zomatoApi.buildMenuPayload();
+                validationErrors = zomatoApi.validateMenuPayload(payload);
+            } catch (buildErr) {
+                return res.json({
+                    success: true,
+                    platform: platformUpper,
+                    preview: { categories: [], catalogues: [], modifierGroups: [] },
+                    summary: { categories: 0, totalCatalogues: 0, rootItems: 0, addonItems: 0, modifierGroups: 0 },
+                    validation: { valid: false, errors: [buildErr.message] },
+                    notes: ['Configure Zomato integration first in the Configuration tab']
+                });
+            }
+
+            // Count root catalogues (in subCategory entities)
+            const rootCatalogueIds = new Set();
+            for (const cat of (payload.categories || [])) {
+                for (const sub of (cat.subCategories || [])) {
+                    for (const ent of (sub.entities || [])) {
+                        rootCatalogueIds.add(ent.vendorEntityId);
+                    }
+                }
+            }
+
+            return res.json({
+                success: true,
+                platform: platformUpper,
+                preview: payload,
+                summary: {
+                    categories: (payload.categories || []).length,
+                    totalCatalogues: (payload.catalogues || []).length,
+                    rootItems: rootCatalogueIds.size,
+                    addonItems: (payload.catalogues || []).length - rootCatalogueIds.size,
+                    modifierGroups: (payload.modifierGroups || []).length
+                },
+                validation: {
+                    valid: validationErrors.length === 0,
+                    errors: validationErrors
+                },
+                notes: [
+                    'This is a FULL SNAPSHOT — only items sent will be retained on Zomato',
+                    'Restaurant will be temporarily toggled off during processing',
+                    'inStock is only honored for NEW entities; use Stock Sync for existing items'
+                ]
+            });
+        }
+
+        res.status(400).json({
+            success: false,
+            error: `Preview not supported for ${platformUpper}`
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Sync stock status to platform
+ */
+exports.syncStockWithPlatform = async (req, res, next) => {
+    try {
+        const { platform } = req.params;
+        const platformUpper = platform.toUpperCase();
+
+        if (platformUpper === 'ZOMATO') {
+            const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+            const result = await zomatoApi.syncStockToZomato();
+            return res.json({
+                success: true,
+                message: 'Stock status synced to Zomato',
+                platform: platformUpper,
+                result
+            });
+        }
+
+        res.status(400).json({
+            success: false,
+            error: `Stock sync not supported for ${platformUpper}`
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Toggle stock for a single item on a platform
+ */
+exports.toggleItemStock = async (req, res, next) => {
+    try {
+        const { platform, menuItemId } = req.params;
+        const { inStock } = req.body;
+        const platformUpper = platform.toUpperCase();
+
+        if (typeof inStock !== 'boolean') {
+            return res.status(400).json({ error: 'inStock (boolean) is required' });
+        }
+
+        if (platformUpper === 'ZOMATO') {
+            const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+            const result = await zomatoApi.toggleItemStock(parseInt(menuItemId, 10), inStock);
+            return res.json({
+                success: true,
+                message: `Item ${inStock ? 'marked in stock' : 'marked out of stock'} on Zomato`,
+                result
+            });
+        }
+
+        res.status(400).json({
+            success: false,
+            error: `Stock toggle not supported for ${platformUpper}`
         });
     } catch (error) {
         next(error);
@@ -467,6 +629,202 @@ exports.getIntegrationStats = async (req, res, next) => {
         res.json({
             success: true,
             stats
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+// ─── Outlet Management ──────────────────────────────────────────────
+
+/**
+ * Get outlet delivery status from Zomato
+ */
+exports.getOutletDeliveryStatus = async (req, res, next) => {
+    try {
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.getDeliveryStatus();
+        res.json({ success: true, deliveryStatus: result });
+    } catch (error) {
+        if (error.message?.includes('not enabled') || error.message?.includes('not configured')) {
+            return res.json({ success: false, deliveryStatus: null, message: error.message });
+        }
+        next(error);
+    }
+};
+
+/**
+ * Toggle outlet delivery on/off on Zomato
+ */
+exports.updateOutletDeliveryStatus = async (req, res, next) => {
+    try {
+        const { enabled, reason } = req.body;
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).json({ error: 'enabled (boolean) is required' });
+        }
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.updateDeliveryStatus(enabled, reason);
+        res.json({
+            success: true,
+            message: `Delivery ${enabled ? 'enabled' : 'disabled'} on Zomato`,
+            result
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Update delivery charge on Zomato
+ */
+exports.updateDeliveryCharge = async (req, res, next) => {
+    try {
+        const { charges } = req.body;
+        if (!charges || !Array.isArray(charges)) {
+            return res.status(400).json({ error: 'charges (array) is required' });
+        }
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.updateDeliveryCharge({ charges });
+        res.json({ success: true, message: 'Delivery charges updated', result });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Get outlet delivery time + surge timings
+ */
+exports.getOutletDeliveryTime = async (req, res, next) => {
+    try {
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.getDeliveryTime();
+        res.json({ success: true, deliveryTime: result });
+    } catch (error) {
+        if (error.message?.includes('not enabled') || error.message?.includes('not configured')) {
+            return res.json({ success: false, deliveryTime: null, message: error.message });
+        }
+        next(error);
+    }
+};
+
+/**
+ * Add or remove surge delivery time
+ */
+exports.updateSurgeTime = async (req, res, next) => {
+    try {
+        const { surgeTime, remove } = req.body;
+        if (typeof surgeTime !== 'number' || surgeTime < 0) {
+            return res.status(400).json({ error: 'surgeTime (positive number in minutes) is required' });
+        }
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.addOrRemoveSurgeTime(surgeTime, remove === true);
+        res.json({
+            success: true,
+            message: remove ? 'Surge time removed' : `Surge time set to ${surgeTime} minutes`,
+            result
+        });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Get Zomato delivery timings
+ */
+exports.getZomatoDeliveryTimings = async (req, res, next) => {
+    try {
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.getZomatoDeliveryTimings();
+        res.json({ success: true, timings: result });
+    } catch (error) {
+        if (error.message?.includes('not enabled') || error.message?.includes('not configured')) {
+            return res.json({ success: false, timings: null, message: error.message });
+        }
+        next(error);
+    }
+};
+
+/**
+ * Update Zomato delivery timings
+ */
+exports.updateZomatoDeliveryTimings = async (req, res, next) => {
+    try {
+        const { timings } = req.body;
+        if (!timings || typeof timings !== 'object') {
+            return res.status(400).json({ error: 'timings (object) is required' });
+        }
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.updateZomatoDeliveryTimings(timings);
+        res.json({ success: true, message: 'Zomato delivery timings updated', result });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Get self-delivery timings
+ */
+exports.getSelfDeliveryTimings = async (req, res, next) => {
+    try {
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.getSelfDeliveryTimings();
+        res.json({ success: true, timings: result });
+    } catch (error) {
+        if (error.message?.includes('not enabled') || error.message?.includes('not configured')) {
+            return res.json({ success: false, timings: null, message: error.message });
+        }
+        next(error);
+    }
+};
+
+/**
+ * Update self-delivery timings
+ */
+exports.updateSelfDeliveryTimings = async (req, res, next) => {
+    try {
+        const { timings } = req.body;
+        if (!timings || typeof timings !== 'object') {
+            return res.status(400).json({ error: 'timings (object) is required' });
+        }
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.updateSelfDeliveryTimings(timings);
+        res.json({ success: true, message: 'Self-delivery timings updated', result });
+    } catch (error) {
+        next(error);
+    }
+};
+
+/**
+ * Get outlet logistics status
+ */
+exports.getLogisticsStatus = async (req, res, next) => {
+    try {
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.getLogisticsStatus();
+        res.json({ success: true, logisticsStatus: result });
+    } catch (error) {
+        if (error.message?.includes('not enabled') || error.message?.includes('not configured')) {
+            return res.json({ success: false, logisticsStatus: null, message: error.message });
+        }
+        next(error);
+    }
+};
+
+/**
+ * Update self-delivery serviceability status
+ */
+exports.updateSelfDeliveryServiceability = async (req, res, next) => {
+    try {
+        const { enabled, reason } = req.body;
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).json({ error: 'enabled (boolean) is required' });
+        }
+        const zomatoApi = require('../integrations/zomato/zomatoApiClient');
+        const result = await zomatoApi.updateSelfDeliveryServiceability(enabled, reason);
+        res.json({
+            success: true,
+            message: `Self-delivery ${enabled ? 'enabled' : 'disabled'}`,
+            result
         });
     } catch (error) {
         next(error);

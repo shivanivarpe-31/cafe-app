@@ -24,7 +24,7 @@ export const IntegrationProvider = ({ children }) => {
         deleteMapping,
         bulkImport,
         exportMappings,
-        syncPreview
+        syncMenu
     } = useIntegration();
 
     const mountedRef = useRef(true);
@@ -125,7 +125,7 @@ export const IntegrationProvider = ({ children }) => {
         handleDeleteMapping,
         handleBulkImport,
         exportMappings,
-        syncPreview
+        syncMenu
     };
 
     return (

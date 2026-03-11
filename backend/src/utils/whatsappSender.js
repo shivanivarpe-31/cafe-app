@@ -48,4 +48,28 @@ async function sendWhatsApp(to, body) {
     return results;
 }
 
-module.exports = { sendWhatsApp };
+/**
+ * Verify Twilio WhatsApp credentials by fetching the account info.
+ */
+async function verifyTwilio() {
+    const { EOD_TWILIO_ACCOUNT_SID, EOD_TWILIO_AUTH_TOKEN, EOD_TWILIO_WHATSAPP_FROM } = process.env;
+
+    if (!EOD_TWILIO_ACCOUNT_SID || !EOD_TWILIO_AUTH_TOKEN || !EOD_TWILIO_WHATSAPP_FROM) {
+        throw new Error('Twilio WhatsApp not configured. Set EOD_TWILIO_ACCOUNT_SID, EOD_TWILIO_AUTH_TOKEN, EOD_TWILIO_WHATSAPP_FROM in .env');
+    }
+
+    // Fetch account info to verify credentials are valid
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${EOD_TWILIO_ACCOUNT_SID}.json`;
+    const res = await axios.get(url, {
+        auth: { username: EOD_TWILIO_ACCOUNT_SID, password: EOD_TWILIO_AUTH_TOKEN },
+        timeout: 10000,
+    });
+
+    if (res.data.status !== 'active') {
+        throw new Error(`Twilio account status is "${res.data.status}", expected "active"`);
+    }
+
+    return true;
+}
+
+module.exports = { sendWhatsApp, verifyTwilio };

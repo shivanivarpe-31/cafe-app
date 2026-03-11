@@ -4,6 +4,7 @@ import { Toaster } from 'react-hot-toast';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { IntegrationProvider } from './context/IntegrationContext';
 import ErrorBoundary from './components/ErrorBoundary';
+import useKitchenReadyAlert from './hooks/useKitchenReadyAlert';
 import Login from './components/Login';
 import Dashboard from './components/Dashboard';
 import { MenuProvider } from './context/MenuContext';
@@ -53,6 +54,9 @@ const ProtectedRoute = ({ children, allowedRoles }) => {
 
 function AppContent() {
   const { isChef } = useAuth();
+
+  // Global kitchen-ready alert sound — plays on any page
+  useKitchenReadyAlert();
 
   // Redirect Chef users to kitchen display by default
   const DefaultRedirect = () => {

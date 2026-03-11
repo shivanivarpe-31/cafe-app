@@ -142,6 +142,8 @@ const EODSettingsPage = () => {
   const [sending, setSending] = useState(false);
   const [testingSmtp, setTestingSmtp] = useState(false);
   const [smtpOk, setSmtpOk] = useState(null);
+  const [testingTwilio, setTestingTwilio] = useState(false);
+  const [twilioOk, setTwilioOk] = useState(null);
   const [previewTab, setPreviewTab] = useState("whatsapp");
 
   /* Load config */
@@ -240,6 +242,22 @@ const EODSettingsPage = () => {
       showError(err.response?.data?.error || "SMTP test failed");
     } finally {
       setTestingSmtp(false);
+    }
+  };
+
+  /* Test Twilio WhatsApp */
+  const testTwilio = async () => {
+    setTestingTwilio(true);
+    setTwilioOk(null);
+    try {
+      await axios.post("/api/eod/test-whatsapp");
+      setTwilioOk(true);
+      showSuccess("Twilio WhatsApp verified!");
+    } catch (err) {
+      setTwilioOk(false);
+      showError(err.response?.data?.error || "Twilio test failed");
+    } finally {
+      setTestingTwilio(false);
     }
   };
 
@@ -543,6 +561,30 @@ EOD_SMTP_FROM="Cafe POS <your@gmail.com>"`}
                       type="tel"
                     />
                   </div>
+                  {cfg?.twilioConfigured && (
+                    <button
+                      onClick={testTwilio}
+                      disabled={testingTwilio}
+                      className="inline-flex items-center gap-2 text-xs font-medium text-green-600 hover:text-green-700 transition-colors disabled:opacity-50"
+                    >
+                      {testingTwilio ? (
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                      ) : twilioOk === true ? (
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-500" />
+                      ) : twilioOk === false ? (
+                        <AlertTriangle className="w-3.5 h-3.5 text-red-500" />
+                      ) : (
+                        <Wifi className="w-3.5 h-3.5" />
+                      )}
+                      {testingTwilio
+                        ? "Verifying…"
+                        : twilioOk === true
+                        ? "Twilio verified"
+                        : twilioOk === false
+                        ? "Test failed — retry?"
+                        : "Test Twilio connection"}
+                    </button>
+                  )}
                   {!cfg?.twilioConfigured && (
                     <div className="bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5 text-xs text-amber-700 leading-relaxed">
                       <strong>Setup:</strong> Add Twilio credentials to{" "}
